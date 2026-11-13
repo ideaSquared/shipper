@@ -85,16 +85,17 @@ export async function sendReport(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: boolean; detail: string }> {
   const body = JSON.stringify(report);
-  return fetchImpl(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ship-signature-256': signBody(secret, body) },
-    body,
-    signal: AbortSignal.timeout(10_000),
-  }).then(
-    async (response) =>
-      response.ok
-        ? { ok: true, detail: 'Discord message sent' }
-        : { ok: false, detail: `bot answered HTTP ${response.status}: ${(await response.text()).slice(0, 200)}` },
-    (error: unknown) => ({ ok: false, detail: error instanceof Error ? error.message : String(error) }),
-  );
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-ship-signature-256': signBody(secret, body) },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.ok) return { ok: true, detail: 'Discord message sent' };
+    const text = await response.text().catch(() => '');
+    return { ok: false, detail: `bot answered HTTP ${response.status}: ${text.slice(0, 200)}` };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
 }

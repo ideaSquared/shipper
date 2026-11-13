@@ -64,6 +64,26 @@ export function createGitHubClient(repository: string, token: string, fetchImpl:
     return fetchFrom(`${BASE}/repos/${repository}${path}`);
   }
 
+  // Walks pages (rel="next") only until `pick` finds something, so a long history costs nothing extra.
+  async function findInPages<T, Item, Found>(
+    path: string,
+    schema: z.ZodType<T>,
+    items: (page: T) => Item[],
+    pick: (item: Item) => Promise<Found | undefined>,
+  ): Promise<Found | undefined> {
+    const fromPage = async (url: string): Promise<Found | undefined> => {
+      const response = await request(url);
+      const found = await items(schema.parse(await response.json())).reduce<Promise<Found | undefined>>(
+        async (earlier, item) => (await earlier) ?? pick(item),
+        Promise.resolve(undefined),
+      );
+      if (found !== undefined) return found;
+      const next = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get('link') ?? '')?.[1];
+      return next ? fromPage(next) : undefined;
+    };
+    return fromPage(`${BASE}/repos/${repository}${path}`);
+  }
+
   async function hasSuccessfulDeployment(sha: string, environment: string): Promise<boolean> {
     const query = new URLSearchParams({ sha, environment, per_page: '100' });
     const deployments = await getAll(`/deployments?${query}`, DeploymentsSchema, (page) => page);
@@ -87,21 +107,20 @@ export function createGitHubClient(repository: string, token: string, fetchImpl:
     },
     async lastSuccessfulDeployment(environment) {
       const query = new URLSearchParams({ environment, per_page: '20' });
-      const deployments = await get(`/deployments?${query}`, DeploymentShasSchema);
       // Newest first; stop at the first one that succeeded.
-      return deployments.reduce<Promise<string | undefined>>(async (found, deployment) => {
-        const sha = await found;
-        if (sha) return sha;
+      return findInPages(`/deployments?${query}`, DeploymentShasSchema, (page) => page, async (deployment) => {
         const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
         return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
-      }, Promise.resolve(undefined));
+      });
     },
     async compare(base, head) {
-      const result = await get(`/compare/${base}...${head}`, CompareSchema);
+      // Every page, so the newest commits are really the newest (one unpaged compare stops at 250).
+      const pages = await getAll(`/compare/${base}...${head}?per_page=100`, CompareSchema, (page) => [page]);
+      const commits = pages.flatMap((page) => page.commits);
       return {
-        totalCommits: result.total_commits,
-        url: result.html_url,
-        commits: result.commits.map((commit) => ({
+        totalCommits: pages[0]?.total_commits ?? commits.length,
+        url: pages[0]?.html_url ?? '',
+        commits: commits.map((commit) => ({
           sha: commit.sha,
           message: commit.commit.message.split('\n')[0] ?? '',
           author: commit.author?.login ?? commit.commit.author?.name ?? 'unknown',

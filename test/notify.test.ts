@@ -94,5 +94,13 @@ describe('sendReport', () => {
       throw new Error('getaddrinfo ENOTFOUND');
     };
     expect((await sendReport('https://bot.dev/ship', 's', buildReport(input), down)).detail).toBe('getaddrinfo ENOTFOUND');
+    const brokenBody: typeof fetch = async () => {
+      const body = new ReadableStream({ start: (controller) => controller.error(new Error('connection reset')) });
+      return new Response(body, { status: 502 });
+    };
+    expect(await sendReport('https://bot.dev/ship', 's', buildReport(input), brokenBody)).toEqual({
+      ok: false,
+      detail: 'bot answered HTTP 502: ',
+    });
   });
 });
