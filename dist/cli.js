@@ -19,7 +19,8 @@ const HELP = `🚢 ship: deploy ideaSquared products
 
 Options:
   --repo owner/name   a repo not in the product list
-  -y, --yes           don't ask before deploying or rolling back
+  -y, --yes           don't ask before deploying or rolling back (production still asks
+                      for the product name)
   --no-wait           start the deploy and exit
   --redeploy          deploy even if that commit is already live
   --to <sha>          rollback: the earlier live commit to put back (7+ characters)
@@ -41,6 +42,14 @@ async function confirm(question) {
     const answer = await rl.question(`${question} [y/N] `);
     rl.close();
     return /^y(es)?$/i.test(answer.trim());
+}
+async function ask(question) {
+    if (!process.stdin.isTTY)
+        throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed in a terminal.');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question(`${question} `);
+    rl.close();
+    return answer;
 }
 async function main() {
     const { values, positionals } = parseArgs({
@@ -85,7 +94,7 @@ async function main() {
         return diff(ctx, environment);
     if (command === 'log')
         return log(ctx, environment, Number(values.n) || 10);
-    const run = { yes: values.yes, wait: !values['no-wait'], confirm, now: () => new Date(), sleep: (ms) => sleep(ms) };
+    const run = { yes: values.yes, wait: !values['no-wait'], confirm, ask, now: () => new Date(), sleep: (ms) => sleep(ms) };
     if (command === 'rollback')
         return rollback(ctx, environment, { ...run, to: values.to });
     return deploy(ctx, environment, { ...run, redeploy: values.redeploy });

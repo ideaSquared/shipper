@@ -5,6 +5,28 @@ import { parseManifest } from "./manifest.js";
 import { plain } from "./style.js";
 export const DEFAULT_ROLLBACK_WORKFLOW = 'ship-rollback.yml';
 const short = (sha) => sha.slice(0, 7);
+// The environment real users are on. Changing it takes a second, typed confirmation.
+const PRODUCTION = 'production';
+// The usual yes/no (skipped by --yes), then for production a red warning and the product name
+// typed back, which --yes never skips.
+async function approve(ctx, env, question, options) {
+    const s = ctx.style;
+    if (env === PRODUCTION) {
+        ctx.print('');
+        ctx.print(s.bad('🚨🚨🚨  PRODUCTION  🚨🚨🚨'));
+        ctx.print(s.bad(`This changes what real users of ${ctx.manifest.product} get, as soon as it finishes.`));
+        ctx.print('');
+    }
+    if (!options.yes && !(await options.confirm(question)))
+        return false;
+    if (env !== PRODUCTION)
+        return true;
+    const typed = await options.ask(`✍️  Type ${s.bold(ctx.manifest.product)} to confirm:`);
+    if (typed.trim() === ctx.manifest.product)
+        return true;
+    ctx.print(`🙅 ${s.bad(`That isn't ${ctx.manifest.product}.`)}`);
+    return false;
+}
 export async function loadContext(client, repo, print, canWrite, style = plain, timeZone) {
     const defaultBranch = await client.defaultBranch();
     const [head, text] = await Promise.all([client.headSha(defaultBranch), client.readFile('ship.yaml', defaultBranch)]);
@@ -173,7 +195,7 @@ export async function deploy(ctx, environment, options) {
     else if (!live) {
         ctx.print(`🆕 First ship to ${s.env(env)}: ${s.sha(short(head))}`);
     }
-    if (!options.yes && !(await options.confirm(`🚀 Ship ${s.sha(short(head))} to ${s.env(env)}?`))) {
+    if (!(await approve(ctx, env, `🚀 Ship ${s.sha(short(head))} to ${s.env(env)}?`, options))) {
         ctx.print(`🙅 ${s.dim('Not shipped.')}`);
         return 1;
     }
@@ -271,7 +293,7 @@ export async function rollback(ctx, environment, options) {
     ctx.print(`⏪ live ${s.sha(short(live))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`);
     if (comparison)
         printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
-    if (!options.yes && !(await options.confirm(`⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`))) {
+    if (!(await approve(ctx, env, `⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`, options))) {
         ctx.print(`🙅 ${s.dim('Not rolled back.')}`);
         return 1;
     }

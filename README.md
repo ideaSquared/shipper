@@ -39,6 +39,10 @@ ship rollback gaminginit-bot production    # put back the commit that was live b
   earlier live commit; 7 characters are enough). It shows the commits being taken out, asks first
   (`--yes` skips that), starts the repo's rollback workflow and follows it like `deploy`. See
   [Rolling back](#rolling-back).
+- 🚨 **Production asks twice.** `deploy` and `rollback` to an environment named `production`
+  print a red warning, ask the usual yes/no, then ask you to type the product name. `--yes`
+  skips only the yes/no, never the typed name, so production can't be shipped by accident or
+  from a script.
 - Nothing builds on your machine: the deploy runs in GitHub Actions, so the Discord message names
   you as the person who shipped.
 - Output uses colour and emojis. Colour turns off when the output is piped or `NO_COLOR` is set.
