@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { deploy, diff, loadContext, log, status, statusAll } from './commands.ts';
+import { deploy, diff, loadContext, log, rollback, status, statusAll } from './commands.ts';
 import { createGitHubClient } from './github.ts';
 import { PRODUCTS, repoFromRemote, resolveRepo } from './products.ts';
 import { terminalStyle } from './style.ts';
@@ -16,12 +16,14 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship log [product] [env] [-n 10]   recent deploys
   ship deploy [product] [env]        check, confirm, start the deploy and follow it
   ship <env> [product]               same as deploy
+  ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
 
 Options:
   --repo owner/name   a repo not in the product list
-  -y, --yes           don't ask before deploying
+  -y, --yes           don't ask before deploying or rolling back
   --no-wait           start the deploy and exit
   --redeploy          deploy even if that commit is already live
+  --to <sha>          rollback: the earlier live commit to put back (7+ characters)
 
 Products: ${Object.keys(PRODUCTS).join(', ')}. Inside a repo's folder the product is optional.
 Sign-in: GH_TOKEN, GITHUB_TOKEN or your gh login.`;
@@ -50,6 +52,7 @@ async function main(): Promise<number> {
       yes: { type: 'boolean', short: 'y', default: false },
       'no-wait': { type: 'boolean', default: false },
       redeploy: { type: 'boolean', default: false },
+      to: { type: 'string' },
       n: { type: 'string', short: 'n', default: '10' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -60,7 +63,7 @@ async function main(): Promise<number> {
     return values.help || first === 'help' ? 0 : 2;
   }
 
-  const known = ['status', 'diff', 'log', 'deploy'];
+  const known = ['status', 'diff', 'log', 'deploy', 'rollback'];
   const command = known.includes(first) ? first : 'deploy';
   const args = known.includes(first) ? rest : positionals;
   const product = args[0] !== undefined && args[0] in PRODUCTS ? args[0] : undefined;
@@ -86,14 +89,9 @@ async function main(): Promise<number> {
   if (command === 'status') return status(ctx);
   if (command === 'diff') return diff(ctx, environment);
   if (command === 'log') return log(ctx, environment, Number(values.n) || 10);
-  return deploy(ctx, environment, {
-    yes: values.yes,
-    wait: !values['no-wait'],
-    redeploy: values.redeploy,
-    confirm,
-    now: () => new Date(),
-    sleep: (ms) => sleep(ms),
-  });
+  const run = { yes: values.yes, wait: !values['no-wait'], confirm, now: () => new Date(), sleep: (ms: number) => sleep(ms) };
+  if (command === 'rollback') return rollback(ctx, environment, { ...run, to: values.to });
+  return deploy(ctx, environment, { ...run, redeploy: values.redeploy });
 }
 
 main().then(

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { deploy, diff, loadContext, log, pickEnvironment, status, statusAll, type Context, type DeployOptions } from '../src/commands.ts';
-import type { DeploymentSummary, GitHubClient, JobSummary, RunSummary } from '../src/github.ts';
+import {
+  deploy,
+  diff,
+  loadContext,
+  log,
+  pickEnvironment,
+  rollback,
+  status,
+  statusAll,
+  type Context,
+  type DeployOptions,
+  type RollbackOptions,
+} from '../src/commands.ts';
+import { GitHubApiError, type DeploymentSummary, type GitHubClient, type JobSummary, type RunSummary } from '../src/github.ts';
 import { parseManifest } from '../src/manifest.ts';
 import { plain } from '../src/style.ts';
 
@@ -86,7 +98,7 @@ function context(client: Fake, manifest = MANIFEST): { ctx: Context; lines: stri
   return { ctx, lines };
 }
 
-const options = (overrides: Partial<DeployOptions> = {}): DeployOptions => ({
+const options = (overrides: Partial<DeployOptions & RollbackOptions> = {}): DeployOptions & RollbackOptions => ({
   yes: true,
   wait: true,
   redeploy: false,
@@ -293,5 +305,92 @@ describe('deploy', () => {
     });
     await statusAll({ app: 'acme/app' }, load, (line) => lines.push(line), plain);
     expect(lines).toEqual(['⚠️  app (acme/app): GitHub API returned 500']);
+  });
+});
+
+describe('rollback', () => {
+  const OLDER = 'dddddddd33333333dddddddd33333333dddddddd';
+  const OLDEST = 'eeeeeeee44444444eeeeeeee44444444eeeeeeee';
+  const history = async (): Promise<DeploymentSummary[]> => [
+    { sha: 'fffffff0', createdAt: '2026-11-13T21:00:00Z', creator: 'o', state: 'failure' },
+    { sha: LIVE, createdAt: '2026-11-13T20:42:50Z', creator: 'octocat', state: 'success' },
+    { sha: LIVE, createdAt: '2026-11-13T20:00:00Z', creator: 'octocat', state: 'inactive' },
+    { sha: OLDER, createdAt: '2026-11-13T19:30:00Z', creator: 'hubot', state: 'inactive' },
+    { sha: OLDEST, createdAt: '2026-11-12T19:30:00Z', creator: 'hubot', state: 'inactive' },
+  ];
+  const takenOut = async () => ({
+    totalCommits: 1,
+    url: 'u',
+    commits: [{ sha: LIVE, message: 'broke it', author: 'octocat', url: 'u' }],
+  });
+
+  it('puts back the commit live before the live one, through the rollback workflow, and follows it', async () => {
+    const client = fakeClient({ deployments: history, compare: takenOut });
+    const { ctx, lines } = context(client);
+    expect(await rollback(ctx, undefined, options())).toBe(0);
+    expect(client.dispatched).toEqual([{ workflow: 'ship-rollback.yml', ref: 'main', inputs: { environment: 'production', sha: OLDER } }]);
+    expect(lines).toEqual([
+      '⏪ live aaaaaaa → ddddddd · 1 commits taken out',
+      '   aaaaaaa broke it · octocat',
+      '▶️  Started: https://github.com/acme/app/actions/runs/7',
+      '   ✅ test: success',
+      '   ✅ deploy / Deploy (production): success',
+      '⏪ Rolled production back to ddddddd.',
+    ]);
+  });
+
+  it('takes --to, by SHA prefix, only for a commit that was live on that environment', async () => {
+    const client = fakeClient({ deployments: history, compare: takenOut });
+    const { ctx } = context(client);
+    await rollback(ctx, undefined, options({ to: 'eeeeeeee4', wait: false }));
+    expect(client.dispatched[0]?.inputs.sha).toBe(OLDEST);
+    await expect(rollback(ctx, undefined, options({ to: 'fffffff0' }))).rejects.toThrow(
+      "fffffff0 was never live on production in its recent deploys, so it can't be a rollback target",
+    );
+    await expect(rollback(ctx, undefined, options({ to: 'aaaaaaa' }))).rejects.toThrow('aaaaaaa is already live on production');
+    await expect(rollback(ctx, undefined, options({ to: 'eee' }))).rejects.toThrow('at least 7 characters');
+  });
+
+  it('uses the rollback workflow named in ship.yaml', async () => {
+    const client = fakeClient({ deployments: history, compare: takenOut });
+    const { ctx } = context(client, MANIFEST.replace('workflow: ci.yml', 'workflow: ci.yml\n  rollbackWorkflow: undo.yml'));
+    await rollback(ctx, undefined, options({ wait: false }));
+    expect(client.dispatched[0]?.workflow).toBe('undo.yml');
+  });
+
+  it('asks first, and does nothing on no', async () => {
+    const client = fakeClient({ deployments: history, compare: takenOut });
+    const { ctx, lines } = context(client);
+    const asked: string[] = [];
+    const confirm = async (question: string) => {
+      asked.push(question);
+      return false;
+    };
+    expect(await rollback(ctx, undefined, options({ yes: false, confirm }))).toBe(1);
+    expect(asked).toEqual(['⏪ Roll production back to ddddddd?']);
+    expect(client.dispatched).toEqual([]);
+    expect(lines.at(-1)).toBe('🙅 Not rolled back.');
+  });
+
+  it('explains when there is nothing to roll back to', async () => {
+    const never = context(fakeClient({ lastSuccessfulDeployment: async () => undefined }));
+    await expect(rollback(never.ctx, undefined, options())).rejects.toThrow('production has never been deployed');
+    const once = context(fakeClient({ deployments: async () => [{ sha: LIVE, createdAt: '', creator: 'o', state: 'success' }] }));
+    await expect(rollback(once.ctx, undefined, options())).rejects.toThrow('No earlier deploy of production to roll back to.');
+  });
+
+  it('shows the workflow to add when the repo has no rollback workflow', async () => {
+    const client = fakeClient({
+      deployments: history,
+      compare: takenOut,
+      dispatchWorkflow: async () => {
+        throw new GitHubApiError('GitHub API /actions/workflows/ship-rollback.yml/dispatches returned 404: Not Found', 404);
+      },
+    });
+    const { ctx } = context(client);
+    const error = await rollback(ctx, undefined, options()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain('This repo has no .github/workflows/ship-rollback.yml to roll back with');
+    expect(String(error)).toContain('      rollback: true');
   });
 });

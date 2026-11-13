@@ -20,6 +20,7 @@ ship diff gaminginit-bot                   # the commits waiting to ship
 ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
+ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
 ```
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
@@ -33,6 +34,10 @@ ship production gaminginit-bot             # same as deploy
   going out, asks before it starts (`--yes` skips that), starts the repo's deploy workflow and
   prints each job as it finishes. `--no-wait` starts it and exits. `--redeploy` deploys a commit
   that is already live.
+- `rollback` puts back the commit that was live before the live one (`--to <sha>` picks another
+  earlier live commit; 7 characters are enough). It shows the commits being taken out, asks first
+  (`--yes` skips that), starts the repo's rollback workflow and follows it like `deploy`. See
+  [Rolling back](#rolling-back).
 - Nothing builds on your machine: the deploy runs in GitHub Actions, so the Discord message names
   you as the person who shipped.
 - Output uses colour and emojis. Colour turns off when the output is piped or `NO_COLOR` is set.
@@ -46,6 +51,7 @@ trigger and call the shipper workflow:
 dispatch:
   workflow: ci.yml                 # file in .github/workflows
   environmentInput: environment    # the workflow input that takes the environment (optional)
+  rollbackWorkflow: ship-rollback.yml   # what ship rollback starts (optional, this is the default)
 ```
 
 `dist/` holds the compiled CLI and is committed, so installing from GitHub needs no build. Run
@@ -57,9 +63,10 @@ dispatch:
    - the commit is on the repo's default branch;
    - every check named in `checks` has passed on that commit;
    - the commit already has a successful deployment in every environment named in `requires`;
-   - the commit is not older than what is live in the environment. This is checked again inside
-     the deploy job, which runs one at a time, so re-running an old CI run, or a run that waited
-     behind a newer deploy, can't put older code back.
+   - the commit is not older than what is live in the environment (a rollback instead needs a
+     commit that was live there before; see [Rolling back](#rolling-back)). This is checked again
+     inside the deploy job, which runs one at a time, so re-running an old CI run, or a run that
+     waited behind a newer deploy, can't put older code back.
 2. **Deploy.** For each component, in the order written in `ship.yaml`: run `build`, apply D1
    migrations, then `wrangler deploy` with a message naming the commit and who shipped it. The first
    component that fails stops the rest.
@@ -72,6 +79,43 @@ secrets and any required reviewers. Shipper records the GitHub Deployment itself
 deploys: it creates the Deployment once the in-job stale check passes (a blocked deploy is not a
 deployment), marks it `in_progress`, then `success` (with the first deployed URL) or `failure`. The
 job sets `deployment: false` so GitHub doesn't record a second one for the run's own commit.
+
+## Rolling back
+
+`ship rollback` redeploys an older commit through the normal pipeline: the gate, build, D1
+migrations, `wrangler deploy`, health check and Discord message all run as for any deploy. It is a
+deploy of old code, not an undo: **D1 migrations are forward-only and are not undone**, so the old
+code runs against the newer schema.
+
+The gate treats a rollback differently in one way: the commit may be older than what is live, but
+it must already have had a successful deployment to the same environment ("<sha> was never live on
+production, so it can't be a rollback target"). Every other rule (default branch, checks,
+`requires`) still applies.
+
+Each product repo needs this workflow at `.github/workflows/ship-rollback.yml` (or another name set
+in `dispatch.rollbackWorkflow`). `ship rollback` tells you to add it if it is missing:
+
+```yaml
+name: Ship rollback
+on:
+  workflow_dispatch:
+    inputs:
+      environment: { description: Environment to roll back, required: true, type: string }
+      sha: { description: Commit to deploy, required: true, type: string }
+jobs:
+  rollback:
+    permissions: { contents: read, checks: read, deployments: write }
+    uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+      sha: ${{ inputs.sha }}
+      rollback: true
+    secrets: inherit
+```
+
+The shipper workflow takes two inputs for this, usable from any caller: `sha` (the full SHA to
+check out and deploy; empty means the run's own commit) and `rollback` (`true` to allow an older,
+previously live commit).
 
 ## Discord message
 

@@ -36,6 +36,8 @@ export const ManifestSchema = z
         workflow: z.string().min(1),
         // Name of the workflow's input that takes the environment. Omit if the workflow has a single target.
         environmentInput: z.string().min(1).optional(),
+        // The workflow `ship rollback` starts (file in .github/workflows). Default: ship-rollback.yml.
+        rollbackWorkflow: z.string().min(1).optional(),
     })
         .optional(),
     // Deployed in the order written; a failure stops the rest.

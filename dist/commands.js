@@ -1,7 +1,9 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { evaluateGate } from "./gate.js";
+import { GitHubApiError } from "./github.js";
 import { parseManifest } from "./manifest.js";
 import { plain } from "./style.js";
+export const DEFAULT_ROLLBACK_WORKFLOW = 'ship-rollback.yml';
 const short = (sha) => sha.slice(0, 7);
 export async function loadContext(client, repo, print, canWrite, style = plain, timeZone) {
     const defaultBranch = await client.defaultBranch();
@@ -178,6 +180,12 @@ export async function deploy(ctx, environment, options) {
     const { workflow, environmentInput } = manifest.dispatch;
     const since = options.now();
     await client.dispatchWorkflow(workflow, ctx.defaultBranch, environmentInput ? { [environmentInput]: env } : {});
+    return followRun(ctx, workflow, since, options, `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`);
+}
+// Finds the run a dispatch started at `since`, prints each job as it changes, and ends with
+// `shipped` or the failure. 0 when the run succeeded (or isn't being waited for).
+async function followRun(ctx, workflow, since, options, shipped) {
+    const { client, style: s } = ctx;
     const findRun = async (attempt) => {
         const run = await client.findDispatchedRun(workflow, since);
         if (run || attempt >= (options.findRunAttempts ?? 20))
@@ -201,10 +209,78 @@ export async function deploy(ctx, environment, options) {
         const next = new Map(jobs.map((job) => [job.name, job.conclusion ?? job.status]));
         if (run.status !== 'completed')
             return follow(next);
-        ctx.print(run.conclusion === 'success'
-            ? `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`
-            : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)}`);
+        ctx.print(run.conclusion === 'success' ? shipped : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)}`);
         return run.conclusion === 'success' ? 0 : 1;
     };
     return follow(new Map());
+}
+const wasLive = (deployment) => deployment.state === 'success' || deployment.state === 'inactive';
+// The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest
+// one that was live before the live one. It must have been live on this environment.
+function rollbackTarget(deployments, live, env, to) {
+    const candidates = deployments.filter(wasLive).map((d) => d.sha).filter((sha) => sha !== live);
+    if (!to) {
+        const [newest] = candidates;
+        if (newest)
+            return newest;
+        throw new Error(`No earlier deploy of ${env} to roll back to.`);
+    }
+    if (to.length < 7)
+        throw new Error(`--to needs at least 7 characters of the SHA (got '${to}').`);
+    if (live.startsWith(to))
+        throw new Error(`${short(live)} is already live on ${env}.`);
+    const match = candidates.find((sha) => sha.startsWith(to));
+    if (match)
+        return match;
+    throw new Error(`${to} was never live on ${env} in its recent deploys, so it can't be a rollback target. See ship log.`);
+}
+function missingRollbackWorkflow(workflow) {
+    return [
+        `This repo has no .github/workflows/${workflow} to roll back with (GitHub says it doesn't exist). Add it:`,
+        '',
+        'name: Ship rollback',
+        'on:',
+        '  workflow_dispatch:',
+        '    inputs:',
+        '      environment: { description: Environment to roll back, required: true, type: string }',
+        '      sha: { description: Commit to deploy, required: true, type: string }',
+        'jobs:',
+        '  rollback:',
+        '    permissions: { contents: read, checks: read, deployments: write }',
+        '    uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1',
+        '    with:',
+        '      environment: ${{ inputs.environment }}',
+        '      sha: ${{ inputs.sha }}',
+        '      rollback: true',
+        '    secrets: inherit',
+    ].join('\n');
+}
+export async function rollback(ctx, environment, options) {
+    const { client, manifest, style: s } = ctx;
+    const env = pickEnvironment(manifest, environment);
+    if (!ctx.canWrite)
+        throw new Error('Rolling back needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
+    const [live, deployments] = await Promise.all([client.lastSuccessfulDeployment(env), client.deployments(env, 50)]);
+    if (!live)
+        throw new Error(`${env} has never been deployed, so there is nothing to roll back.`);
+    const target = rollbackTarget(deployments, live, env, options.to);
+    const comparison = await client.compare(target, live).catch((error) => {
+        ctx.print(`⚠️  ${s.warn(`Could not list the commits being taken out: ${error instanceof Error ? error.message : String(error)}`)}`);
+        return undefined;
+    });
+    ctx.print(`⏪ live ${s.sha(short(live))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`);
+    if (comparison)
+        printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
+    if (!options.yes && !(await options.confirm(`⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`))) {
+        ctx.print(`🙅 ${s.dim('Not rolled back.')}`);
+        return 1;
+    }
+    const workflow = manifest.dispatch?.rollbackWorkflow ?? DEFAULT_ROLLBACK_WORKFLOW;
+    const since = options.now();
+    await client.dispatchWorkflow(workflow, ctx.defaultBranch, { environment: env, sha: target }).catch((error) => {
+        if (error instanceof GitHubApiError && error.status === 404)
+            throw new Error(missingRollbackWorkflow(workflow));
+        throw error;
+    });
+    return followRun(ctx, workflow, since, options, `⏪ ${s.ok(`Rolled ${env} back to ${short(target)}.`)}`);
 }

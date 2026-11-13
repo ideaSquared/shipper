@@ -7,8 +7,11 @@ export type GateFacts = {
   defaultBranch: string;
   onDefaultBranch: boolean;
   checkRuns: readonly CheckRun[];
-  // Environments this SHA has a successful deployment in.
+  // Environments this SHA has a successful deployment in. For a rollback, this includes the target
+  // environment if the SHA was ever live there.
   deployedTo: readonly string[];
+  // Putting back a commit that was live before: it may be older than what is live now.
+  rollback?: boolean;
   // What is live in the target environment, and how this SHA relates to it (GitHub compare status
   // of live...sha: "ahead", "behind", "identical" or "diverged").
   live?: { sha: string; relation: string };
@@ -22,6 +25,17 @@ export function staleFailure(sha: string, environment: string, live: GateFacts['
   if (live.relation === 'behind') return `${short} is older than ${liveShort}, which is live on ${environment}`;
   if (live.relation === 'diverged') return `${short} is not built on ${liveShort}, which is live on ${environment}`;
   return undefined;
+}
+
+// What a deploy may do to what is live: a deploy must not go back in time; a rollback must, but only
+// to a commit that was live in this environment before.
+export function liveFailure(
+  facts: Pick<GateFacts, 'sha' | 'live' | 'deployedTo' | 'rollback'>,
+  environment: string,
+): string | undefined {
+  if (!facts.rollback) return staleFailure(facts.sha, environment, facts.live);
+  if (facts.deployedTo.includes(environment)) return undefined;
+  return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
 
 export type GateResult = { ok: boolean; failures: string[] };
@@ -39,7 +53,7 @@ export function evaluateGate(manifest: Manifest, environment: string, facts: Gat
   const short = facts.sha.slice(0, 7);
   const failures = [
     facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
-    staleFailure(facts.sha, environment, facts.live),
+    liveFailure(facts, environment),
     ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
     ...env.requires
       .filter((required) => !facts.deployedTo.includes(required))
