@@ -160,12 +160,20 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     client.deployedTo(head, requires),
     client.lastSuccessfulDeployment(env),
   ]);
+  // Unknown history never blocks a deploy: if GitHub can't compare, warn and carry on.
+  const unknown = (what: string) => (error: unknown) => {
+    ctx.print(`⚠️  ${s.warn(`Could not ${what}: ${error instanceof Error ? error.message : String(error)}`)}`);
+    return undefined;
+  };
+  const relation =
+    live && live !== head ? await client.relation(live, head).catch(unknown(`compare ${short(head)} with the live ${short(live)}`)) : undefined;
   const gate = evaluateGate(manifest, env, {
     sha: head,
     defaultBranch: ctx.defaultBranch,
     onDefaultBranch: true,
     checkRuns,
     deployedTo,
+    live: live && relation ? { sha: live, relation } : undefined,
   });
   if (!gate.ok) {
     ctx.print(`⛔ ${s.bad(`Can't ship ${short(head)} to ${env}:`)}`);
@@ -180,9 +188,11 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
   }
 
   if (live && live !== head) {
-    const comparison = await client.compare(live, head);
-    ctx.print(`📦 ${s.sha(short(live))} → ${s.sha(short(head))} · ${s.warn(`${comparison.totalCommits} commits`)}`);
-    printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
+    const comparison = await client.compare(live, head).catch(unknown('list the commits going out'));
+    ctx.print(
+      `📦 ${s.sha(short(live))} → ${s.sha(short(head))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits`)}` : ''}`,
+    );
+    if (comparison) printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
   } else if (!live) {
     ctx.print(`🆕 First ship to ${s.env(env)}: ${s.sha(short(head))}`);
   }

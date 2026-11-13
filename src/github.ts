@@ -9,6 +9,8 @@ export type GitHubClient = {
   // SHA of the newest deployment to the environment that reached success, if any.
   lastSuccessfulDeployment(environment: string): Promise<string | undefined>;
   compare(base: string, head: string): Promise<Comparison>;
+  // GitHub's compare status of base...head: "ahead", "behind", "identical" or "diverged".
+  relation(base: string, head: string): Promise<string>;
   defaultBranch(): Promise<string>;
   headSha(branch: string): Promise<string>;
   readFile(path: string, ref: string): Promise<string | undefined>;
@@ -163,6 +165,9 @@ export function createGitHubClient(repository: string, token: string | undefined
         const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
         return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
       });
+    },
+    async relation(base, head) {
+      return (await get(`/compare/${base}...${head}?per_page=1`, CompareSchema)).status;
     },
     async compare(base, head) {
       // Every page, so the newest commits are really the newest (one unpaged compare stops at 250).
