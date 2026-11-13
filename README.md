@@ -14,7 +14,8 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ```
 
 ```bash
-ship status gaminginit-bot                 # what is live in each environment, and how far behind main
+ship status                                # every product: what is live, and how far behind its default branch
+ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
 ship diff gaminginit-bot                   # the commits waiting to ship
 ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
@@ -23,6 +24,8 @@ ship production gaminginit-bot             # same as deploy
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
   it inside the repo's checkout and leave the product out.
+- `ship status` with no product lists every product in `src/products.ts` (`ship status all` does
+  too, even inside a product's checkout). A product that can't be read shows as one ⚠️ line.
 - The environment is optional when `ship.yaml` has only one.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
@@ -76,13 +79,17 @@ and each component's result (deployed, rolled back with the reason, failed, or s
 
 It needs two things:
 
-- `discord:` in `ship.yaml`, naming the bot project (`ads`, `pairflix`, `creatrgrid`, `gaminginit`);
+- `discord:` in `ship.yaml`, naming the bot project (`ads`, `pairflix`, `creatrgrid`, `gaminginit`,
+  `ideasquared`);
 - the `SHIP_NOTIFY_SECRET` org secret, which the bot holds too. The calling job passes it with
   `secrets: inherit`.
 
 Without either, the deploy still runs and the job log says why no message was sent. A message
 that fails to send never fails the deploy. Turn off "Deployment statuses" on the repo's bot webhook,
 or the bot posts GitHub's plainer deployment message as well.
+
+Each report also updates the live board in `#ship-status`: one message the bot edits, showing what is
+live in every product and environment, who shipped it and when, and any failed or blocked attempt.
 
 ## ship.yaml
 
@@ -114,9 +121,15 @@ is the only component type so far.
 ## Using it in a repo
 
 1. Add `ship.yaml` at the repo root.
-2. Put `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the GitHub Environment for each target
-   (or in the repo secrets). `SHIP_NOTIFY_SECRET` comes from the org.
-3. Call the workflow from a job:
+2. Create a GitHub Environment for each target: repo → Settings → Environments → New environment,
+   named exactly as in `ship.yaml` (`production`, `staging`). GitHub does not create it on first use,
+   and the deploy job fails at once with "environment not found" without it. On a private repo, this
+   needs a paid GitHub plan.
+3. Put `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in that Environment or in the repo
+   secrets. `SHIP_NOTIFY_SECRET` comes from the org.
+4. Add the product to `src/products.ts` so `ship status` lists it and `ship <command> <product>`
+   finds it, then run `pnpm build`.
+5. Call the workflow from a job:
 
 ```yaml
 jobs:
