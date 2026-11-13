@@ -4,13 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { deploy, diff, loadContext, log, status } from "./commands.js";
+import { deploy, diff, loadContext, log, status, statusAll } from "./commands.js";
 import { createGitHubClient } from "./github.js";
-import { PRODUCTS, resolveRepo } from "./products.js";
+import { PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
 import { terminalStyle } from "./style.js";
 const HELP = `🚢 ship: deploy ideaSquared products
 
-  ship status [product]              what is live in each environment
+  ship status [product]              what is live in each environment (no product: every product)
   ship diff [product] [env]          commits waiting to ship
   ship log [product] [env] [-n 10]   recent deploys
   ship deploy [product] [env]        check, confirm, start the deploy and follow it
@@ -62,10 +62,18 @@ async function main() {
     const args = known.includes(first) ? rest : positionals;
     const product = args[0] !== undefined && args[0] in PRODUCTS ? args[0] : undefined;
     const environment = product ? args[1] : args[0];
-    const repo = resolveRepo({ repo: values.repo, product, remote: quiet('git', ['remote', 'get-url', 'origin']) });
     const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || quiet('gh', ['auth', 'token']);
+    const style = terminalStyle(process.stdout);
+    const print = (line) => console.log(line);
+    const choice = { repo: values.repo, product, remote: quiet('git', ['remote', 'get-url', 'origin']) };
+    // `ship status` outside any product's folder, or `ship status all`: every product at once.
+    const wantsAll = environment === 'all' || (!choice.repo && !choice.product && !repoFromRemote(choice.remote ?? ''));
+    if (command === 'status' && wantsAll) {
+        return statusAll(PRODUCTS, (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
+    }
+    const repo = resolveRepo(choice);
     const client = createGitHubClient(repo, token);
-    const ctx = await loadContext(client, repo, (line) => console.log(line), Boolean(token), terminalStyle(process.stdout));
+    const ctx = await loadContext(client, repo, print, Boolean(token), style);
     if (command === 'status')
         return status(ctx);
     if (command === 'diff')
