@@ -211,4 +211,9 @@ describe('createGitHubClient', () => {
       'GitHub API / returned 403: API rate limit exceeded',
     );
   });
+
+  it("reads GitHub's compare status between two commits", async () => {
+    const { fetch } = fakeFetch({ '/compare/live...old?per_page=1': { status: 'behind' } });
+    expect(await createGitHubClient('acme/app', 'token', fetch).relation('live', 'old')).toBe('behind');
+  });
 });

@@ -114,6 +114,9 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
                 return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
             });
         },
+        async relation(base, head) {
+            return (await get(`/compare/${base}...${head}?per_page=1`, CompareSchema)).status;
+        },
         async compare(base, head) {
             // Every page, so the newest commits are really the newest (one unpaged compare stops at 250).
             const pages = await getAll(`/compare/${base}...${head}?per_page=100`, CompareSchema, (page) => [page]);

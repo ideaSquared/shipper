@@ -27,6 +27,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'success' }],
     deployedTo: async () => [],
     lastSuccessfulDeployment: async () => LIVE,
+    relation: async () => 'ahead',
     compare: async () => ({
       totalCommits: 2,
       url: 'https://github.com/acme/app/compare/a...c',
@@ -232,5 +233,13 @@ describe('deploy', () => {
     const { ctx, lines } = context(failing);
     await deploy({ ...ctx, style }, undefined, options());
     expect(lines).toEqual(["⛔ <bad>Can't ship ccccccc to production:</bad>", "   • <bad>check 'test' did not pass</bad>"]);
+  });
+
+  it('refuses to put an older commit over what is live', async () => {
+    const client = fakeClient({ relation: async () => 'behind' });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(1);
+    expect(client.dispatched).toEqual([]);
+    expect(lines).toEqual(["⛔ Can't ship ccccccc to production:", '   • ccccccc is older than aaaaaaa, which is live on production']);
   });
 });

@@ -1,4 +1,16 @@
 import { environmentOf } from "./manifest.js";
+// A commit older than what is live would undo newer work, e.g. when an old CI run is re-run.
+export function staleFailure(sha, environment, live) {
+    if (!live)
+        return undefined;
+    const short = sha.slice(0, 7);
+    const liveShort = live.sha.slice(0, 7);
+    if (live.relation === 'behind')
+        return `${short} is older than ${liveShort}, which is live on ${environment}`;
+    if (live.relation === 'diverged')
+        return `${short} is not built on ${liveShort}, which is live on ${environment}`;
+    return undefined;
+}
 function checkFailure(name, runs) {
     const matching = runs.filter((run) => run.name === name);
     if (matching.length === 0)
@@ -14,6 +26,7 @@ export function evaluateGate(manifest, environment, facts) {
     const short = facts.sha.slice(0, 7);
     const failures = [
         facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
+        staleFailure(facts.sha, environment, facts.live),
         ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
         ...env.requires
             .filter((required) => !facts.deployedTo.includes(required))

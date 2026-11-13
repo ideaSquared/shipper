@@ -67,4 +67,16 @@ describe('evaluateGate', () => {
   it('does not ask staging to have been deployed before staging', () => {
     expect(evaluateGate(manifest, 'staging', { ...passing, deployedTo: [] }).ok).toBe(true);
   });
+
+  it('blocks a commit older than, or not built on, what is live', () => {
+    const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
+    expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'behind' } }).failures).toEqual([
+      'abcdef1 is older than fedcba9, which is live on staging',
+    ]);
+    expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'diverged' } }).failures).toEqual([
+      'abcdef1 is not built on fedcba9, which is live on staging',
+    ]);
+    expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'ahead' } }).ok).toBe(true);
+    expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'identical' } }).ok).toBe(true);
+  });
 });

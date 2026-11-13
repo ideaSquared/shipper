@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { deployComponents, renderSummary, type Run } from './cloudflare.ts';
-import { evaluateGate } from './gate.ts';
+import { evaluateGate, staleFailure, type GateFacts } from './gate.ts';
 import { createGitHubClient, type GitHubClient } from './github.ts';
 import { environmentOf, parseManifest, type Manifest } from './manifest.ts';
 import { buildReport, outcomeOf, sendReport, type Comparison, type ReportInput } from './notify.ts';
@@ -89,15 +89,28 @@ function summarise(path: string | undefined, markdown: string): void {
   if (path) appendFileSync(path, markdown);
 }
 
+// What is live in the environment and how `sha` relates to it. Unknown history never blocks a deploy.
+async function liveFacts(github: GitHubClient, environment: string, sha: string, live?: string): Promise<GateFacts['live']> {
+  if (!live) return undefined;
+  return github.relation(live, sha).then(
+    (relation) => ({ sha: live, relation }),
+    (error: unknown) => {
+      annotate('Ship', `Could not compare ${sha.slice(0, 7)} with the live ${live.slice(0, 7)}: ${String(error)}`, 'warning');
+      return undefined;
+    },
+  );
+}
+
 async function gate(environment: string): Promise<number> {
   const env = EnvSchema.extend({ DEFAULT_BRANCH: z.string().min(1) }).parse(process.env);
   const manifest = loadManifest(env.SHIP_REPO_ROOT);
   const required = environmentOf(manifest, environment).requires;
   const github = createGitHubClient(env.GITHUB_REPOSITORY, env.GITHUB_TOKEN);
-  const [onDefaultBranch, checkRuns, deployedTo] = await Promise.all([
+  const [onDefaultBranch, checkRuns, deployedTo, liveSha] = await Promise.all([
     github.isOnBranch(env.GITHUB_SHA, env.DEFAULT_BRANCH),
     manifest.checks.length > 0 ? github.checkRuns(env.GITHUB_SHA) : Promise.resolve([]),
     github.deployedTo(env.GITHUB_SHA, required),
+    github.lastSuccessfulDeployment(environment).catch(() => undefined),
   ]);
   const result = evaluateGate(manifest, environment, {
     sha: env.GITHUB_SHA,
@@ -105,6 +118,7 @@ async function gate(environment: string): Promise<number> {
     onDefaultBranch,
     checkRuns,
     deployedTo,
+    live: await liveFacts(github, environment, env.GITHUB_SHA, liveSha),
   });
   if (result.ok) {
     console.log(`Gate passed: ${env.GITHUB_SHA.slice(0, 7)} can deploy to ${environment}.`);
@@ -136,6 +150,16 @@ async function deploy(environment: string): Promise<number> {
     annotate('Ship', `Could not read the last deploy to ${environment}: ${String(error)}`, 'warning');
     return undefined;
   });
+
+  // Checked again here, inside the one-deploy-at-a-time job: a newer commit may have shipped while
+  // this run waited, or this may be a re-run of an old run.
+  const stale = staleFailure(env.GITHUB_SHA, environment, await liveFacts(github, environment, env.GITHUB_SHA, previousSha));
+  if (stale) {
+    annotate('Ship', `${stale}. Not deploying an older commit over a newer one.`);
+    summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${stale}\n`);
+    await notify(env, manifest, { environment, outcome: 'blocked', failures: [stale] });
+    return 1;
+  }
 
   const results = await deployComponents({
     manifest,

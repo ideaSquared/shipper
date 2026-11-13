@@ -53,7 +53,10 @@ dispatch:
 1. **Gate.** Blocks the deploy unless:
    - the commit is on the repo's default branch;
    - every check named in `checks` has passed on that commit;
-   - the commit already has a successful deployment in every environment named in `requires`.
+   - the commit already has a successful deployment in every environment named in `requires`;
+   - the commit is not older than what is live in the environment. This is checked again inside
+     the deploy job, which runs one at a time, so re-running an old CI run, or a run that waited
+     behind a newer deploy, can't put older code back.
 2. **Deploy.** For each component, in the order written in `ship.yaml`: run `build`, apply D1
    migrations, then `wrangler deploy` with a message naming the commit and who shipped it. The first
    component that fails stops the rest.

@@ -9,7 +9,20 @@ export type GateFacts = {
   checkRuns: readonly CheckRun[];
   // Environments this SHA has a successful deployment in.
   deployedTo: readonly string[];
+  // What is live in the target environment, and how this SHA relates to it (GitHub compare status
+  // of live...sha: "ahead", "behind", "identical" or "diverged").
+  live?: { sha: string; relation: string };
 };
+
+// A commit older than what is live would undo newer work, e.g. when an old CI run is re-run.
+export function staleFailure(sha: string, environment: string, live: GateFacts['live']): string | undefined {
+  if (!live) return undefined;
+  const short = sha.slice(0, 7);
+  const liveShort = live.sha.slice(0, 7);
+  if (live.relation === 'behind') return `${short} is older than ${liveShort}, which is live on ${environment}`;
+  if (live.relation === 'diverged') return `${short} is not built on ${liveShort}, which is live on ${environment}`;
+  return undefined;
+}
 
 export type GateResult = { ok: boolean; failures: string[] };
 
@@ -26,6 +39,7 @@ export function evaluateGate(manifest: Manifest, environment: string, facts: Gat
   const short = facts.sha.slice(0, 7);
   const failures = [
     facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
+    staleFailure(facts.sha, environment, facts.live),
     ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
     ...env.requires
       .filter((required) => !facts.deployedTo.includes(required))

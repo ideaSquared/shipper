@@ -166,6 +166,7 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     onDefaultBranch: true,
     checkRuns,
     deployedTo,
+    live: live && live !== head ? { sha: live, relation: await client.relation(live, head) } : undefined,
   });
   if (!gate.ok) {
     ctx.print(`⛔ ${s.bad(`Can't ship ${short(head)} to ${env}:`)}`);
