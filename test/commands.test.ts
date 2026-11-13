@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deploy, diff, loadContext, log, pickEnvironment, status, type Context, type DeployOptions } from '../src/commands.ts';
+import { deploy, diff, loadContext, log, pickEnvironment, status, statusAll, type Context, type DeployOptions } from '../src/commands.ts';
 import type { DeploymentSummary, GitHubClient, JobSummary, RunSummary } from '../src/github.ts';
 import { parseManifest } from '../src/manifest.ts';
 import { plain } from '../src/style.ts';
@@ -260,5 +260,36 @@ describe('deploy', () => {
       '⚠️  Could not list the commits going out: GitHub API returned 502',
       '📦 aaaaaaa → ccccccc',
     ]);
+  });
+
+  it('shows every product in list order, and explains one it cannot read', async () => {
+    const lines: string[] = [];
+    const load = async (repo: string, out: (line: string) => void): Promise<Context> => {
+      if (repo === 'acme/missing') throw new Error('acme/missing has no ship.yaml on main');
+      return { ...context(fakeClient()).ctx, repo, print: out };
+    };
+    await statusAll({ app: 'acme/app', missing: 'acme/missing' }, load, (line) => lines.push(line), plain);
+    expect(lines).toEqual([
+      '🚢 gaminginit-bot (acme/app) · main is at ccccccc',
+      '🟡 production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind',
+      '',
+      '⚠️  missing (acme/missing): acme/missing has no ship.yaml on main',
+    ]);
+  });
+
+  it('replaces a product that fails part-way with one warning line', async () => {
+    const lines: string[] = [];
+    const broken = fakeClient({
+      deployments: async () => {
+        throw new Error('GitHub API returned 500');
+      },
+    });
+    const load = async (repo: string, out: (line: string) => void): Promise<Context> => ({
+      ...context(broken).ctx,
+      repo,
+      print: out,
+    });
+    await statusAll({ app: 'acme/app' }, load, (line) => lines.push(line), plain);
+    expect(lines).toEqual(['⚠️  app (acme/app): GitHub API returned 500']);
   });
 });

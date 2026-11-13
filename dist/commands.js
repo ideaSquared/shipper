@@ -49,6 +49,26 @@ export async function status(ctx) {
     rows.forEach((row) => ctx.print(row));
     return 0;
 }
+// `ship status` with no product: every product, fetched together, printed in list order.
+export async function statusAll(products, load, print, style) {
+    const sections = await Promise.all(Object.entries(products).map(async ([name, repo]) => {
+        const lines = [];
+        try {
+            await status(await load(repo, (line) => lines.push(line)));
+            return lines;
+        }
+        catch (error) {
+            // One line per product that can't be read, never a half-printed section above it.
+            return [`⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`];
+        }
+    }));
+    sections.forEach((lines, index) => {
+        if (index > 0)
+            print('');
+        lines.forEach((line) => print(line));
+    });
+    return 0;
+}
 function printCommits(ctx, commits, total, max) {
     const newest = [...commits].reverse().slice(0, max);
     const s = ctx.style;
