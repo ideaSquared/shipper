@@ -14,7 +14,7 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ```
 
 ```bash
-ship status                                # every product: what is live, and how far behind its default branch
+ship status all                            # every product: what is live, and how far behind its default branch
 ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
 ship diff gaminginit-bot                   # the commits waiting to ship
 ship log gaminginit-bot -n 10              # recent deploys and their state
@@ -25,8 +25,9 @@ ship rollback gaminginit-bot production    # put back the commit that was live b
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
   it inside the repo's checkout and leave the product out.
-- `ship status` with no product lists every product in `src/products.ts` (`ship status all` does
-  too, even inside a product's checkout). A product that can't be read shows as one ⚠️ line.
+- `ship status all` lists every product in `src/products.ts`, from any folder. A bare `ship status`
+  does the same outside a product's checkout; inside one (or with `--repo`) it shows only that
+  product. A product that can't be read shows as one ⚠️ line.
 - The environment is optional when `ship.yaml` has only one.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
@@ -199,9 +200,11 @@ components:
 
 1. Add `ship.yaml` at the repo root.
 2. Create a GitHub Environment for each target: repo → Settings → Environments → New environment,
-   named exactly as in `ship.yaml` (`production`, `staging`). GitHub does not create it on first use,
-   and the deploy job fails at once with "environment not found" without it. On a private repo, this
-   needs a paid GitHub plan.
+   named exactly as in `ship.yaml` (`production`, `staging`). It holds the environment's secrets and
+   any required reviewers. Create it before the first deploy: when gaminginit and ideasquared-bot first
+   deployed, GitHub did not create it from the workflow's `inputs.environment`, and the deploy job
+   failed at once with "environment not found" until it was created by hand. On a private repo,
+   environments need a paid GitHub plan.
 3. Put `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in that Environment or in the repo
    secrets. `SHIP_NOTIFY_SECRET` comes from the org.
 4. Add the product to `src/products.ts` so `ship status` lists it and `ship <command> <product>`
