@@ -7,7 +7,8 @@ import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, status } from "./commands.js";
 import { createGitHubClient } from "./github.js";
 import { PRODUCTS, resolveRepo } from "./products.js";
-const HELP = `ship: deploy ideaSquared products
+import { terminalStyle } from "./style.js";
+const HELP = `🚢 ship: deploy ideaSquared products
 
   ship status [product]              what is live in each environment
   ship diff [product] [env]          commits waiting to ship
@@ -64,7 +65,7 @@ async function main() {
     const repo = resolveRepo({ repo: values.repo, product, remote: quiet('git', ['remote', 'get-url', 'origin']) });
     const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || quiet('gh', ['auth', 'token']);
     const client = createGitHubClient(repo, token);
-    const ctx = await loadContext(client, repo, (line) => console.log(line), Boolean(token));
+    const ctx = await loadContext(client, repo, (line) => console.log(line), Boolean(token), terminalStyle(process.stdout));
     if (command === 'status')
         return status(ctx);
     if (command === 'diff')
@@ -81,6 +82,7 @@ async function main() {
     });
 }
 main().then((code) => process.exit(code), (error) => {
-    console.error(`ship: ${error instanceof Error ? error.message : String(error)}`);
+    const red = terminalStyle(process.stderr).bad;
+    console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
 });

@@ -2,6 +2,7 @@
 import { evaluateGate } from './gate.ts';
 import type { GitHubClient, JobSummary } from './github.ts';
 import { parseManifest, type Manifest } from './manifest.ts';
+import { plain, type Style } from './style.ts';
 
 export type Context = {
   client: GitHubClient;
@@ -12,6 +13,7 @@ export type Context = {
   print: (line: string) => void;
   canWrite: boolean;
   timeZone?: string;
+  style: Style;
 };
 
 export type DeployOptions = {
@@ -32,12 +34,13 @@ export async function loadContext(
   repo: string,
   print: (line: string) => void,
   canWrite: boolean,
+  style: Style = plain,
   timeZone?: string,
 ): Promise<Context> {
   const defaultBranch = await client.defaultBranch();
   const [head, text] = await Promise.all([client.headSha(defaultBranch), client.readFile('ship.yaml', defaultBranch)]);
   if (text === undefined) throw new Error(`${repo} has no ship.yaml on ${defaultBranch}, so it doesn't deploy with shipper yet.`);
-  return { client, repo, manifest: parseManifest(text), defaultBranch, head, print, canWrite, timeZone };
+  return { client, repo, manifest: parseManifest(text), defaultBranch, head, print, canWrite, timeZone, style };
 }
 
 function formatTime(iso: string, timeZone?: string): string {
@@ -63,14 +66,18 @@ export function pickEnvironment(manifest: Manifest, named: string | undefined): 
 }
 
 export async function status(ctx: Context): Promise<number> {
-  const { client, manifest, head } = ctx;
-  ctx.print(`${manifest.product} (${ctx.repo}) · ${ctx.defaultBranch} is at ${short(head)}`);
+  const { client, manifest, head, style: s } = ctx;
+  ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
   const rows = await Promise.all(
     Object.keys(manifest.environments).map(async (env) => {
       const [latest] = (await client.deployments(env, 20)).filter((d) => d.state === 'success' || d.state === 'inactive');
-      if (!latest) return `  ${env.padEnd(12)} never deployed`;
-      const behind = latest.sha === head ? 'up to date' : `${(await client.compare(latest.sha, head)).totalCommits} commits behind`;
-      return `  ${env.padEnd(12)} ${short(latest.sha)}  ${formatTime(latest.createdAt, ctx.timeZone)}  ${latest.creator}  ${behind}`;
+      const name = s.env(env.padEnd(12));
+      if (!latest) return `⚪ ${name} ${s.dim('never deployed')}`;
+      const upToDate = latest.sha === head;
+      const behind = upToDate
+        ? s.ok('up to date')
+        : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
+      return `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
     }),
   );
   rows.forEach((row) => ctx.print(row));
@@ -79,42 +86,68 @@ export async function status(ctx: Context): Promise<number> {
 
 function printCommits(ctx: Context, commits: { sha: string; message: string; author: string }[], total: number, max: number) {
   const newest = [...commits].reverse().slice(0, max);
-  newest.forEach((c) => ctx.print(`  ${short(c.sha)} ${c.message} · ${c.author}`));
-  if (total > newest.length) ctx.print(`  …and ${total - newest.length} more`);
+  const s = ctx.style;
+  newest.forEach((c) => ctx.print(`   ${s.sha(short(c.sha))} ${c.message} ${s.dim(`· ${c.author}`)}`));
+  if (total > newest.length) ctx.print(s.dim(`   …and ${total - newest.length} more`));
 }
 
 export async function diff(ctx: Context, environment: string | undefined): Promise<number> {
+  const s = ctx.style;
   const env = pickEnvironment(ctx.manifest, environment);
   const live = await ctx.client.lastSuccessfulDeployment(env);
   if (!live) {
-    ctx.print(`${env} has never been deployed. ${ctx.defaultBranch} is at ${short(ctx.head)}.`);
+    ctx.print(`⚪ ${s.env(env)} has never been deployed. ${ctx.defaultBranch} is at ${s.sha(short(ctx.head))}.`);
     return 0;
   }
   if (live === ctx.head) {
-    ctx.print(`${env} is up to date at ${short(live)}.`);
+    ctx.print(`🟢 ${s.env(env)} is ${s.ok('up to date')} at ${s.sha(short(live))}.`);
     return 0;
   }
   const comparison = await ctx.client.compare(live, ctx.head);
-  ctx.print(`${env}: ${short(live)} → ${short(ctx.head)} · ${comparison.totalCommits} commits waiting`);
+  ctx.print(
+    `📦 ${s.env(env)}: ${s.sha(short(live))} → ${s.sha(short(ctx.head))} · ${s.warn(`${comparison.totalCommits} commits waiting`)}`,
+  );
   printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
-  ctx.print(`  ${comparison.url}`);
+  ctx.print(`🔗 ${s.link(comparison.url)}`);
   return 0;
 }
 
 export async function log(ctx: Context, environment: string | undefined, limit: number): Promise<number> {
   const env = pickEnvironment(ctx.manifest, environment);
   const deployments = await ctx.client.deployments(env, limit);
-  if (deployments.length === 0) ctx.print(`No deployments to ${env} yet.`);
-  deployments.forEach((d) =>
-    ctx.print(`  ${formatTime(d.createdAt, ctx.timeZone)}  ${short(d.sha)}  ${d.state.padEnd(11)} ${d.creator}`),
-  );
+  const s = ctx.style;
+  if (deployments.length === 0) ctx.print(`⚪ No deployments to ${s.env(env)} yet.`);
+  deployments.forEach((d) => {
+    const [icon, paint] = look(d.state, s);
+    ctx.print(`${icon} ${s.dim(formatTime(d.createdAt, ctx.timeZone))}  ${s.sha(short(d.sha))}  ${paint(d.state.padEnd(11))} ${d.creator}`);
+  });
   return 0;
 }
 
-const jobLine = (job: JobSummary) => `  ${job.name}: ${job.conclusion ?? job.status}`;
+// Icon and colour for deployment states and job results.
+const STATE_LOOK: Record<string, [string, 'ok' | 'bad' | 'dim' | 'warn']> = {
+  success: ['✅', 'ok'],
+  inactive: ['💤', 'dim'],
+  failure: ['❌', 'bad'],
+  error: ['❌', 'bad'],
+  cancelled: ['🛑', 'bad'],
+  skipped: ['⏭️', 'dim'],
+};
+
+// Anything not listed (queued, in_progress, pending…) is still running.
+function look(state: string, s: Style): [string, (text: string) => string] {
+  const [icon, tone] = STATE_LOOK[state] ?? ['⏳', 'warn'];
+  return [icon, s[tone]];
+}
+
+function jobLine(job: JobSummary, s: Style): string {
+  const result = job.conclusion ?? job.status;
+  const [icon, paint] = look(result, s);
+  return `   ${icon} ${job.name}: ${paint(result)}`;
+}
 
 export async function deploy(ctx: Context, environment: string | undefined, options: DeployOptions): Promise<number> {
-  const { client, manifest, head } = ctx;
+  const { client, manifest, head, style: s } = ctx;
   const env = pickEnvironment(manifest, environment);
   if (!manifest.dispatch) {
     throw new Error('ship.yaml has no dispatch.workflow, so ship cannot start a deploy. See the shipper README.');
@@ -135,24 +168,26 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     deployedTo,
   });
   if (!gate.ok) {
-    ctx.print(`Can't ship ${short(head)} to ${env}:`);
-    gate.failures.forEach((failure) => ctx.print(`  • ${failure}`));
+    ctx.print(`⛔ ${s.bad(`Can't ship ${short(head)} to ${env}:`)}`);
+    gate.failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
     return 1;
   }
   if (live === head && !options.redeploy) {
-    ctx.print(`${short(head)} is already live on ${env}. Nothing to ship (use --redeploy to deploy it again).`);
+    ctx.print(
+      `✅ ${s.sha(short(head))} is ${s.ok('already live')} on ${s.env(env)}. Nothing to ship ${s.dim('(use --redeploy to deploy it again)')}.`,
+    );
     return 0;
   }
 
   if (live && live !== head) {
     const comparison = await client.compare(live, head);
-    ctx.print(`${short(live)} → ${short(head)} · ${comparison.totalCommits} commits`);
+    ctx.print(`📦 ${s.sha(short(live))} → ${s.sha(short(head))} · ${s.warn(`${comparison.totalCommits} commits`)}`);
     printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
   } else if (!live) {
-    ctx.print(`First ship to ${env}: ${short(head)}`);
+    ctx.print(`🆕 First ship to ${s.env(env)}: ${s.sha(short(head))}`);
   }
-  if (!options.yes && !(await options.confirm(`Ship ${short(head)} to ${env}?`))) {
-    ctx.print('Not shipped.');
+  if (!options.yes && !(await options.confirm(`🚀 Ship ${s.sha(short(head))} to ${s.env(env)}?`))) {
+    ctx.print(`🙅 ${s.dim('Not shipped.')}`);
     return 1;
   }
 
@@ -168,20 +203,24 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
   };
   const started = await findRun(1);
   if (!started) {
-    ctx.print(`Started, but the run hasn't appeared yet. Check https://github.com/${ctx.repo}/actions`);
+    ctx.print(`⏳ Started, but the run hasn't appeared yet. Check ${s.link(`https://github.com/${ctx.repo}/actions`)}`);
     return 0;
   }
-  ctx.print(`Started: ${started.url}`);
+  ctx.print(`▶️  Started: ${s.link(started.url)}`);
   if (!options.wait) return 0;
 
   const follow = async (seen: ReadonlyMap<string, string>): Promise<number> => {
     await options.sleep(options.pollMs ?? 10_000);
     const [run, jobs] = await Promise.all([client.run(started.id), client.jobs(started.id)]);
     const changed = jobs.filter((job) => seen.get(job.name) !== (job.conclusion ?? job.status));
-    changed.forEach((job) => ctx.print(jobLine(job)));
+    changed.forEach((job) => ctx.print(jobLine(job, s)));
     const next = new Map(jobs.map((job) => [job.name, job.conclusion ?? job.status]));
     if (run.status !== 'completed') return follow(next);
-    ctx.print(run.conclusion === 'success' ? `Shipped ${short(head)} to ${env}.` : `Deploy ${run.conclusion ?? 'ended'}: ${run.url}`);
+    ctx.print(
+      run.conclusion === 'success'
+        ? `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`
+        : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)}`,
+    );
     return run.conclusion === 'success' ? 0 : 1;
   };
   return follow(new Map());
