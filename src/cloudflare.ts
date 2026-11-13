@@ -23,13 +23,14 @@ export type DeployOptions = {
   healthTimeoutMs?: number;
 };
 
-const NOT_DEPLOYED_URL = /(developers\.cloudflare\.com|github\.com|dash\.cloudflare\.com)/;
-
-// The https URLs wrangler prints for the Worker it just deployed.
+// The URLs wrangler prints for the Worker it just deployed. Wrangler puts each one on a line of its own
+// under "Deployed <name> triggers"; URLs elsewhere (a var's value, a docs link) share their line with
+// other text, so only bare URL lines count.
 export function parseDeployedUrls(output: string): string[] {
-  return (output.match(/https:\/\/[^\s'"<>()]+/g) ?? [])
-    .map((url) => url.replace(/[.,;:]+$/, ''))
-    .filter((url) => !NOT_DEPLOYED_URL.test(url));
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^https:\/\/\S+$/.test(line));
 }
 
 export function resolveHealthUrl(health: string, deployedUrls: readonly string[]): string {
