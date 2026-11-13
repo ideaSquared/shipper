@@ -97,3 +97,7 @@ pnpm typecheck
 
 The scripts are TypeScript run directly by Node 22.18 or newer (type stripping), so there is no build
 step. `src/main.ts` is what the workflow runs.
+
+## Licence
+
+[MIT](LICENSE)
