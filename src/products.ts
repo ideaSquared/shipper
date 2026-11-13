@@ -30,3 +30,12 @@ export function resolveRepo(choice: RepoChoice): string {
     `Which product? Name one (${Object.keys(PRODUCTS).join(', ')}), pass --repo owner/name, or run inside the repo.`,
   );
 }
+
+// The product and environment named on the command line, in either order:
+// `ship deploy ads production`, `ship production ads` and `ship ads production` all mean the same.
+export function parseTarget(args: readonly string[]): { product?: string; environment?: string } {
+  const product = args.find((arg) => arg in PRODUCTS);
+  const environment = args.find((arg) => arg !== product);
+  return { product, environment };
+}
+

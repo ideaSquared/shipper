@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
 import { createGitHubClient } from "./github.js";
-import { PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
+import { parseTarget, PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
 import { terminalStyle } from "./style.js";
 const HELP = `🚢 ship: deploy ideaSquared products
 
@@ -72,8 +72,7 @@ async function main() {
     const known = ['status', 'diff', 'log', 'deploy', 'rollback'];
     const command = known.includes(first) ? first : 'deploy';
     const args = known.includes(first) ? rest : positionals;
-    const product = args[0] !== undefined && args[0] in PRODUCTS ? args[0] : undefined;
-    const environment = product ? args[1] : args[0];
+    const { product, environment } = parseTarget(args);
     const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || quiet('gh', ['auth', 'token']);
     const style = terminalStyle(process.stdout);
     const print = (line) => console.log(line);
