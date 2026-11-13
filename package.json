@@ -1,0 +1,24 @@
+{
+  "name": "@ideasquared/ship",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deploy tooling for every ideaSquared product: a ship.yaml manifest and a reusable GitHub Actions workflow.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "packageManager": "pnpm@10.34.3",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.2"
+  }
+}
