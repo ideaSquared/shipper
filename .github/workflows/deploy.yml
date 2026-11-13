@@ -32,6 +32,9 @@ permissions:
 env:
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
   WRANGLER_SEND_METRICS: 'false'
+  # Where the deploy message goes: the ideaSquared bot, which posts it to the project's -github
+  # channel. Signed with SHIP_NOTIFY_SECRET (an org secret); without it the deploy still runs.
+  SHIP_NOTIFY_URL: https://ideasquared-bot.idea-squared.workers.dev/ship
 
 jobs:
   gate:
@@ -42,17 +45,17 @@ jobs:
       checks: read
       deployments: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: app
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: ideaSquared/shipper
           ref: ${{ inputs.shipper-ref }}
           path: shipper
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: corepack enable
@@ -65,29 +68,33 @@ jobs:
           SHIP_REPO_ROOT: ${{ github.workspace }}/app
           GITHUB_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SHIP_NOTIFY_SECRET: ${{ secrets.SHIP_NOTIFY_SECRET }}
 
   deploy:
     name: Deploy (${{ inputs.environment }})
     needs: gate
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      deployments: read
     # One deploy per repo and environment at a time. A queued one waits; it never cancels a live one
     # (that could leave D1 migrations half applied).
     concurrency:
       group: ship-${{ github.repository }}-${{ inputs.environment }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: app
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: ideaSquared/shipper
           ref: ${{ inputs.shipper-ref }}
           path: shipper
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: corepack enable
@@ -102,3 +109,5 @@ jobs:
           SHIP_REPO_ROOT: ${{ github.workspace }}/app
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SHIP_NOTIFY_SECRET: ${{ secrets.SHIP_NOTIFY_SECRET }}

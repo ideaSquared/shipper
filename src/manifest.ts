@@ -28,6 +28,8 @@ const CloudflareWorkerSchema = z.strictObject({
 export const ManifestSchema = z
   .strictObject({
     product: z.string().regex(NAME),
+    // ideaSquared bot project that gets the deploy message in its -github channel (e.g. gaminginit).
+    discord: z.string().regex(NAME).optional(),
     environments: z.record(z.string().regex(NAME), EnvironmentSchema),
     // Check runs that must have succeeded on the SHA before it deploys.
     checks: z.array(z.string().min(1)).default([]),

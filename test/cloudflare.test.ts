@@ -107,7 +107,12 @@ describe('deployComponents', () => {
     const { run, calls } = fakeRun();
     const results = await deployComponents(options(SINGLE, run));
     expect(results).toEqual([
-      { name: 'bot', status: 'deployed', url: 'https://wardogs-discord-bot.example.workers.dev' },
+      {
+        name: 'bot',
+        status: 'deployed',
+        url: 'https://wardogs-discord-bot.example.workers.dev',
+        detail: 'health check passed: https://wardogs-discord-bot.example.workers.dev/api/stats answered',
+      },
     ]);
     expect(calls).toEqual([
       { command: 'pnpm', args: ['exec', 'wrangler', 'deploy', '--message', 'ship abcdef1 by octocat'], cwd: '/repo' },

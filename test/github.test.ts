@@ -71,4 +71,90 @@ describe('createGitHubClient', () => {
     expect((await github.checkRuns('aaa')).map((run) => run.name)).toEqual(['lint', 'test']);
     expect(await github.deployedTo('aaa', ['staging'])).toEqual(['staging']);
   });
+
+  it('finds the newest deployment that succeeded, skipping one still running', async () => {
+    const { fetch } = fakeFetch({
+      '/deployments?environment=production&per_page=20': [
+        { id: 3, sha: 'ccc' },
+        { id: 2, sha: 'bbb' },
+        { id: 1, sha: 'aaa' },
+      ],
+      '/deployments/3/statuses?per_page=100': [{ state: 'in_progress' }],
+      '/deployments/2/statuses?per_page=100': [{ state: 'inactive' }, { state: 'success' }],
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.lastSuccessfulDeployment('production')).toBe('bbb');
+  });
+
+  it('returns nothing for an environment never deployed', async () => {
+    const { fetch } = fakeFetch({ '/deployments?environment=production&per_page=20': [] });
+    expect(await createGitHubClient('acme/app', 'token', fetch).lastSuccessfulDeployment('production')).toBeUndefined();
+  });
+
+  it('summarises the commits between two SHAs', async () => {
+    const { fetch } = fakeFetch({
+      '/compare/aaa...bbb?per_page=100': {
+        status: 'ahead',
+        total_commits: 1,
+        html_url: 'https://github.com/acme/app/compare/aaa...bbb',
+        commits: [
+          {
+            sha: 'bbb',
+            html_url: 'https://github.com/acme/app/commit/bbb',
+            commit: { message: 'fix: thing (#3)\n\nlong body', author: { name: 'Octo Cat' } },
+            author: null,
+          },
+        ],
+      },
+    });
+    expect(await createGitHubClient('acme/app', 'token', fetch).compare('aaa', 'bbb')).toEqual({
+      totalCommits: 1,
+      url: 'https://github.com/acme/app/compare/aaa...bbb',
+      commits: [{ sha: 'bbb', message: 'fix: thing (#3)', author: 'Octo Cat', url: 'https://github.com/acme/app/commit/bbb' }],
+    });
+  });
+
+  it('reads every page of a long comparison so the newest commits are included', async () => {
+    const commit = (sha: string) => ({
+      sha,
+      html_url: `https://github.com/acme/app/commit/${sha}`,
+      commit: { message: sha, author: { name: 'a' } },
+      author: { login: 'a' },
+    });
+    const pages: Record<string, { body: unknown; next?: string }> = {
+      '/repos/acme/app/compare/aaa...zzz?per_page=100': {
+        body: { status: 'ahead', total_commits: 3, html_url: 'cmp', commits: [commit('c1'), commit('c2')] },
+        next: 'https://api.github.com/repositories/1/compare/aaa...zzz?per_page=100&page=2',
+      },
+      '/repositories/1/compare/aaa...zzz?per_page=100&page=2': {
+        body: { status: 'ahead', total_commits: 3, html_url: 'cmp', commits: [commit('c3')] },
+      },
+    };
+    const fetchImpl: typeof fetch = async (input) => {
+      const page = pages[String(input).replace('https://api.github.com', '')];
+      if (!page) return new Response('{}', { status: 404 });
+      return new Response(JSON.stringify(page.body), { headers: page.next ? { link: `<${page.next}>; rel="next"` } : undefined });
+    };
+    const result = await createGitHubClient('acme/app', 'token', fetchImpl).compare('aaa', 'zzz');
+    expect(result.totalCommits).toBe(3);
+    expect(result.commits.map((c) => c.sha)).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('looks past the first page of deployments for the last success', async () => {
+    const pages: Record<string, { body: unknown; next?: string }> = {
+      '/repos/acme/app/deployments?environment=production&per_page=20': {
+        body: [{ id: 9, sha: 'running' }],
+        next: 'https://api.github.com/repositories/1/deployments?environment=production&per_page=20&page=2',
+      },
+      '/repos/acme/app/deployments/9/statuses?per_page=100': { body: [{ state: 'in_progress' }] },
+      '/repositories/1/deployments?environment=production&per_page=20&page=2': { body: [{ id: 8, sha: 'good' }] },
+      '/repos/acme/app/deployments/8/statuses?per_page=100': { body: [{ state: 'success' }] },
+    };
+    const fetchImpl: typeof fetch = async (input) => {
+      const page = pages[String(input).replace('https://api.github.com', '')];
+      if (!page) return new Response('{}', { status: 404 });
+      return new Response(JSON.stringify(page.body), { headers: page.next ? { link: `<${page.next}>; rel="next"` } : undefined });
+    };
+    expect(await createGitHubClient('acme/app', 'token', fetchImpl).lastSuccessfulDeployment('production')).toBe('good');
+  });
 });

@@ -111,7 +111,7 @@ async function deployOne(name: string, component: Component, options: DeployOpti
   if (!component.health) return { name, status: 'deployed', url };
 
   const health = await checkHealth(component.health, deploy.output, options);
-  if (health.ok) return { name, status: 'deployed', url };
+  if (health.ok) return { name, status: 'deployed', url, detail: `health check passed: ${health.detail}` };
 
   const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';
   const rollback = await wrangler(['rollback', '--yes', '--message', `ship: health check failed for ${short}`]);

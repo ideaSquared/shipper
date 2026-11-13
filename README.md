@@ -21,13 +21,30 @@ command-line tool comes next.
    forward-only and are not undone.
 
 The deploy job runs in the GitHub Environment named after the target environment. GitHub records it
-as a Deployment, which the ideaSquared bot posts to Discord, and the Environment holds the secrets
-and any required reviewers.
+as a Deployment, and the Environment holds the secrets and any required reviewers.
+
+## Discord message
+
+After every deploy, and whenever the gate blocks one, shipper sends a signed report to the
+ideaSquared bot (`POST /ship`). The bot posts it as an embed to the project's `-github` channel:
+who shipped, when, the commit that was live before and the one now live, the commits in between,
+and each component's result (deployed, rolled back with the reason, failed, or skipped).
+
+It needs two things:
+
+- `discord:` in `ship.yaml`, naming the bot project (`ads`, `pairflix`, `creatrgrid`, `gaminginit`);
+- the `SHIP_NOTIFY_SECRET` org secret, which the bot holds too. The calling job passes it with
+  `secrets: inherit`.
+
+Without either, the deploy still runs and the job log says why no message was sent. A message
+that fails to send never fails the deploy. Turn off "Deployment statuses" on the repo's bot webhook,
+or the bot posts GitHub's plainer deployment message as well.
 
 ## ship.yaml
 
 ```yaml
 product: creatrgrid
+discord: creatrgrid              # bot project for the deploy message (optional)
 checks: [verify, e2e]            # check runs that must pass on the commit (optional)
 environments:
   staging:
@@ -53,7 +70,7 @@ is the only component type so far.
 
 1. Add `ship.yaml` at the repo root.
 2. Put `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the GitHub Environment for each target
-   (or in the repo secrets).
+   (or in the repo secrets). `SHIP_NOTIFY_SECRET` comes from the org.
 3. Call the workflow from a job:
 
 ```yaml
