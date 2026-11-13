@@ -118,6 +118,36 @@ components:                      # deployed in this order
 Unknown keys are rejected, so a typo fails the deploy instead of being ignored. `cloudflare-worker`
 is the only component type so far.
 
+### Per-environment settings
+
+A product with a staging environment usually needs a different Worker name, health URL and build
+for each environment:
+
+```yaml
+environments:
+  staging:
+    wranglerEnv: staging         # wrangler deploy --env staging (an [env.staging] block in wrangler config)
+  production:
+    requires: [staging]          # production only takes commits already live on staging
+components:
+  api:
+    type: cloudflare-worker
+    path: services/api
+    health:                      # one health check per environment
+      staging: https://api-staging.example.com/api/v1/health
+      production: /api/v1/health
+  web:
+    type: cloudflare-worker
+    path: apps/web
+    build: pnpm --filter @creatorgrid/app.web build:$SHIP_ENVIRONMENT
+```
+
+- `health` is either one path or URL for every environment, or a map from environment name to a
+  path or URL. Every key must be an environment in `ship.yaml`. An environment the map leaves out
+  has no health check: the component counts as deployed, with "no health check for staging".
+- `build` runs with two extra environment variables: `SHIP_ENVIRONMENT` (the environment being
+  deployed, e.g. `staging`) and `SHIP_WRANGLER_ENV` (its `wranglerEnv`, or empty when it has none).
+
 ## Using it in a repo
 
 1. Add `ship.yaml` at the repo root.

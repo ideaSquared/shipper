@@ -22,8 +22,8 @@ const EnvSchema = z.object({
     SHIP_NOTIFY_SECRET: z.string().optional(),
 });
 // Streams the command's output to the job log and also returns it.
-const run = (command, args, cwd) => new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+const run = (command, args, cwd, extraEnv = {}) => new Promise((resolve) => {
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
     const collect = (stream) => (chunk) => {
         chunks.push(chunk.toString());

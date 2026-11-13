@@ -25,9 +25,9 @@ const EnvSchema = z.object({
 type ShipEnv = z.infer<typeof EnvSchema>;
 
 // Streams the command's output to the job log and also returns it.
-const run: Run = (command, args, cwd) =>
+const run: Run = (command, args, cwd, extraEnv = {}) =>
   new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: string[] = [];
     const collect = (stream: NodeJS.WritableStream) => (chunk: Buffer) => {
       chunks.push(chunk.toString());

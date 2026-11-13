@@ -21,8 +21,10 @@ const CloudflareWorkerSchema = z.strictObject({
   build: z.string().optional(),
   migrations: D1MigrationsSchema.optional(),
   // Path on the deployed URL (e.g. /health) or a full https URL. Polled after
-  // deploy; a failure rolls the Worker back to its previous version.
-  health: z.string().optional(),
+  // deploy; a failure rolls the Worker back to its previous version. A record
+  // ({ staging: ..., production: ... }) sets it per environment; an environment
+  // it leaves out has no health check.
+  health: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
 });
 
 export const ManifestSchema = z
@@ -62,6 +64,13 @@ export const ManifestSchema = z
           }),
         ),
     );
+    Object.entries(manifest.components).forEach(([name, component]) =>
+      Object.keys(typeof component.health === 'object' ? component.health : {})
+        .filter((env) => !(env in manifest.environments))
+        .forEach((env) =>
+          ctx.addIssue({ code: 'custom', path: ['components', name, 'health', env], message: `unknown environment '${env}'` }),
+        ),
+    );
   });
 
 export type Manifest = z.infer<typeof ManifestSchema>;
@@ -80,4 +89,10 @@ export function environmentOf(manifest: Manifest, name: string): Environment {
   if (env) return env;
   const known = Object.keys(manifest.environments).join(', ');
   throw new Error(`environment '${name}' is not in ship.yaml (known: ${known})`);
+}
+
+// The component's health check for one environment, if it has one there.
+export function healthFor(component: Component, environment: string): string | undefined {
+  if (typeof component.health === 'object') return component.health[environment];
+  return component.health;
 }
