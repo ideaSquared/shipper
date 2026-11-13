@@ -21,6 +21,8 @@ export type DeployOptions = {
   wait: boolean;
   redeploy: boolean;
   confirm: (question: string) => Promise<boolean>;
+  // Asks for typed text (the product name, before touching production).
+  ask: (question: string) => Promise<string>;
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
   pollMs?: number;
@@ -35,6 +37,32 @@ type FollowOptions = Pick<DeployOptions, 'wait' | 'now' | 'sleep' | 'pollMs' | '
 export const DEFAULT_ROLLBACK_WORKFLOW = 'ship-rollback.yml';
 
 const short = (sha: string) => sha.slice(0, 7);
+
+// The environment real users are on. Changing it takes a second, typed confirmation.
+const PRODUCTION = 'production';
+
+// The usual yes/no (skipped by --yes), then for production a red warning and the product name
+// typed back, which --yes never skips.
+async function approve(
+  ctx: Context,
+  env: string,
+  question: string,
+  options: Pick<DeployOptions, 'yes' | 'confirm' | 'ask'>,
+): Promise<boolean> {
+  const s = ctx.style;
+  if (env === PRODUCTION) {
+    ctx.print('');
+    ctx.print(s.bad('🚨🚨🚨  PRODUCTION  🚨🚨🚨'));
+    ctx.print(s.bad(`This changes what real users of ${ctx.manifest.product} get, as soon as it finishes.`));
+    ctx.print('');
+  }
+  if (!options.yes && !(await options.confirm(question))) return false;
+  if (env !== PRODUCTION) return true;
+  const typed = await options.ask(`✍️  Type ${s.bold(ctx.manifest.product)} to confirm:`);
+  if (typed.trim() === ctx.manifest.product) return true;
+  ctx.print(`🙅 ${s.bad(`That isn't ${ctx.manifest.product}.`)}`);
+  return false;
+}
 
 export async function loadContext(
   client: GitHubClient,
@@ -229,7 +257,7 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
   } else if (!live) {
     ctx.print(`🆕 First ship to ${s.env(env)}: ${s.sha(short(head))}`);
   }
-  if (!options.yes && !(await options.confirm(`🚀 Ship ${s.sha(short(head))} to ${s.env(env)}?`))) {
+  if (!(await approve(ctx, env, `🚀 Ship ${s.sha(short(head))} to ${s.env(env)}?`, options))) {
     ctx.print(`🙅 ${s.dim('Not shipped.')}`);
     return 1;
   }
@@ -328,7 +356,7 @@ export async function rollback(ctx: Context, environment: string | undefined, op
     `⏪ live ${s.sha(short(live))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`,
   );
   if (comparison) printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
-  if (!options.yes && !(await options.confirm(`⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`))) {
+  if (!(await approve(ctx, env, `⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`, options))) {
     ctx.print(`🙅 ${s.dim('Not rolled back.')}`);
     return 1;
   }

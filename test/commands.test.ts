@@ -103,6 +103,7 @@ const options = (overrides: Partial<DeployOptions & RollbackOptions> = {}): Depl
   wait: true,
   redeploy: false,
   confirm: async () => true,
+  ask: async () => 'gaminginit-bot',
   now: () => new Date('2026-11-13T21:00:00Z'),
   sleep: async () => {},
   pollMs: 0,
@@ -180,6 +181,10 @@ describe('deploy', () => {
       '📦 aaaaaaa → ccccccc · 2 commits',
       '   ccccccc newest feature · octocat',
       '   bbbbbbb older fix · hubot',
+      '',
+      '🚨🚨🚨  PRODUCTION  🚨🚨🚨',
+      'This changes what real users of gaminginit-bot get, as soon as it finishes.',
+      '',
       '▶️  Started: https://github.com/acme/app/actions/runs/7',
       '   ✅ test: success',
       '   ✅ deploy / Deploy (production): success',
@@ -332,6 +337,10 @@ describe('rollback', () => {
     expect(lines).toEqual([
       '⏪ live aaaaaaa → ddddddd · 1 commits taken out',
       '   aaaaaaa broke it · octocat',
+      '',
+      '🚨🚨🚨  PRODUCTION  🚨🚨🚨',
+      'This changes what real users of gaminginit-bot get, as soon as it finishes.',
+      '',
       '▶️  Started: https://github.com/acme/app/actions/runs/7',
       '   ✅ test: success',
       '   ✅ deploy / Deploy (production): success',
@@ -394,3 +403,30 @@ describe('rollback', () => {
     expect(String(error)).toContain('      rollback: true');
   });
 });
+
+describe('production safety', () => {
+  it('shows a production warning and needs the product name typed back, even with --yes', async () => {
+    const asked: string[] = [];
+    const client = fakeClient();
+    const { ctx, lines } = context(client);
+    expect(
+      await deploy(
+        ctx,
+        'production',
+        options({ wait: false, ask: async (question) => (asked.push(question), 'gaminginit') }),
+      ),
+    ).toBe(1);
+    expect(lines).toContain('🚨🚨🚨  PRODUCTION  🚨🚨🚨');
+    expect(asked).toHaveLength(1);
+    expect(lines.slice(-2)).toEqual(["🙅 That isn't gaminginit-bot.", '🙅 Not shipped.']);
+    expect(client.dispatched).toEqual([]);
+  });
+
+  it('deploys production once the name is typed', async () => {
+    const client = fakeClient();
+    const { ctx } = context(client);
+    expect(await deploy(ctx, 'production', options({ wait: false }))).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+  });
+});
+

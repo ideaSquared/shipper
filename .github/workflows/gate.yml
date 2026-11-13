@@ -1,0 +1,76 @@
+# Reusable gate, for a repo that deploys with its own workflow (a `type: external` component):
+#
+#   gate:
+#     permissions: { contents: read, checks: read, deployments: read }
+#     uses: ideaSquared/shipper/.github/workflows/gate.yml@v1
+#     with: { environment: staging }
+#     secrets: inherit
+#   deploy:
+#     needs: gate
+#     uses: ./.github/workflows/deploy.yml   # the repo's own deploy
+#   report:
+#     needs: [gate, deploy]
+#     if: always() && needs.gate.result == 'success'
+#     uses: ideaSquared/shipper/.github/workflows/report.yml@v1
+#     with: { environment: staging, outcome: '${{ needs.deploy.result }}' }
+#     secrets: inherit
+#
+# The same rules as deploy.yml's gate: on the default branch, ship.yaml's checks passed, any
+# `requires` environment already has the commit, and it is not older than what is live. A blocked
+# commit fails the job and posts the "blocked" message to Discord.
+name: Ship gate
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment from ship.yaml about to be deployed to.
+        type: string
+        required: true
+      shipper-ref:
+        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line.
+        type: string
+        default: v1
+
+permissions:
+  contents: read
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  SHIP_NOTIFY_URL: https://ideasquared-bot.idea-squared.workers.dev/ship
+
+jobs:
+  gate:
+    name: Gate (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      deployments: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: ideaSquared/shipper
+          ref: ${{ inputs.shipper-ref }}
+          path: shipper
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile --prod
+        working-directory: shipper
+      - run: node src/main.ts gate "$SHIP_ENVIRONMENT"
+        working-directory: shipper
+        env:
+          SHIP_ENVIRONMENT: ${{ inputs.environment }}
+          SHIP_SHA: ${{ github.sha }}
+          SHIP_ROLLBACK: 'false'
+          SHIP_REPO_ROOT: ${{ github.workspace }}/app
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SHIP_NOTIFY_SECRET: ${{ secrets.SHIP_NOTIFY_SECRET }}

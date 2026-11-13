@@ -222,10 +222,32 @@ async function deploy(environment) {
     });
     return shipped && recorded ? 0 : 1;
 }
-const COMMANDS = { gate, deploy };
+// After a repo deployed with its own workflow (the gate.yml + report.yml path): sends the Discord
+// message for the deploy job's result. Only ever warns: the deploy already happened.
+async function report(environment) {
+    const env = EnvSchema.extend({ SHIP_OUTCOME: z.string().default('failure') }).parse(process.env);
+    const manifest = loadManifest(env.SHIP_REPO_ROOT);
+    const github = createGitHubClient(env.GITHUB_REPOSITORY, env.GITHUB_TOKEN);
+    const deployments = await github.deployments(environment, 30).catch((error) => {
+        annotate('Ship', `Could not read the deploys to ${environment}: ${String(error)}`, 'warning');
+        return [];
+    });
+    // Newest first, so the first live commit that isn't this one is what was live before.
+    const previousSha = deployments.find((d) => (d.state === 'success' || d.state === 'inactive') && d.sha !== env.SHIP_SHA)?.sha;
+    const shipped = env.SHIP_OUTCOME === 'success';
+    await notify(env, manifest, {
+        environment,
+        outcome: shipped ? 'shipped' : 'failed',
+        previousSha,
+        comparison: await changesSince(github, previousSha, env.SHIP_SHA),
+        components: [{ name: 'deploy', status: shipped ? 'deployed' : 'failed', detail: `deploy job: ${env.SHIP_OUTCOME}` }],
+    });
+    return 0;
+}
+const COMMANDS = { gate, deploy, report };
 const [command, environment] = process.argv.slice(2);
 if (!command || !(command in COMMANDS) || !environment) {
-    console.error('Usage: node src/main.ts <gate|deploy> <environment>');
+    console.error('Usage: node src/main.ts <gate|deploy|report> <environment>');
     process.exit(2);
 }
 // The guard above has checked that `command` is a key of COMMANDS.
