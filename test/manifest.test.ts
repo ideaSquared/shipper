@@ -36,7 +36,7 @@ components: { bot: { type: cloudflare-worker } }
 `);
     expect(manifest.checks).toEqual([]);
     expect(manifest.environments.production).toEqual({ requires: [] });
-    expect(manifest.components.bot?.path).toBe('.');
+    expect(manifest.components.bot).toMatchObject({ type: 'cloudflare-worker', path: '.' });
   });
 
   it('rejects unknown keys so typos are caught', () => {
@@ -65,7 +65,7 @@ product: x
 environments: { staging: {}, production: {} }
 components: { api: { type: cloudflare-worker, health: { staging: /health, production: https://x.dev/health } } }
 `);
-    expect(manifest.components.api?.health).toEqual({ staging: '/health', production: 'https://x.dev/health' });
+    expect(manifest.components.api).toMatchObject({ health: { staging: '/health', production: 'https://x.dev/health' } });
     expect(() =>
       parseManifest(`
 product: x
@@ -97,3 +97,15 @@ describe('environmentOf', () => {
     expect(() => environmentOf(parseManifest(VALID), 'prod')).toThrow(/known: staging, production/);
   });
 });
+
+describe('external components', () => {
+  it('accepts a component the repo deploys with its own workflow', () => {
+    const manifest = parseManifest(`
+product: ads
+environments: { staging: {}, production: { requires: [staging] } }
+components: { stack: { type: external, workflow: .github/workflows/deploy.yml } }
+`);
+    expect(manifest.components.stack).toEqual({ type: 'external', workflow: '.github/workflows/deploy.yml' });
+  });
+});
+

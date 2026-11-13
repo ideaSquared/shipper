@@ -1,0 +1,62 @@
+# Reusable Discord report, for a repo that deploys with its own workflow: run it after that deploy
+# job with the job's result (see gate.yml for the full pattern). It posts who shipped what, the
+# commit range since the last live commit, and whether the deploy succeeded. It never fails the
+# run: the deploy has already happened.
+name: Ship report
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment from ship.yaml that was deployed to.
+        type: string
+        required: true
+      outcome:
+        description: The deploy job's result (needs.<job>.result) — success, failure or cancelled.
+        type: string
+        required: true
+      shipper-ref:
+        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line.
+        type: string
+        default: v1
+
+permissions:
+  contents: read
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  SHIP_NOTIFY_URL: https://ideasquared-bot.idea-squared.workers.dev/ship
+
+jobs:
+  report:
+    name: Report (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: ideaSquared/shipper
+          ref: ${{ inputs.shipper-ref }}
+          path: shipper
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile --prod
+        working-directory: shipper
+      - run: node src/main.ts report "$SHIP_ENVIRONMENT"
+        working-directory: shipper
+        env:
+          SHIP_ENVIRONMENT: ${{ inputs.environment }}
+          SHIP_OUTCOME: ${{ inputs.outcome }}
+          SHIP_SHA: ${{ github.sha }}
+          SHIP_REPO_ROOT: ${{ github.workspace }}/app
+          GITHUB_TOKEN: ${{ github.token }}
+          SHIP_NOTIFY_SECRET: ${{ secrets.SHIP_NOTIFY_SECRET }}

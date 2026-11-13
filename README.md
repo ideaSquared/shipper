@@ -238,6 +238,48 @@ GitHub recording its own Deployment.
 
 The repo must use pnpm: the workflow runs `pnpm install --frozen-lockfile` and `pnpm exec wrangler`.
 
+## A repo with its own deploy workflow
+
+Some products already deploy with a workflow of their own (images, approvals, signing, a server
+over SSH) that shipper shouldn't replace. For those, `ship.yaml` lists one `type: external`
+component, and the repo calls shipper's gate before its deploy and the report after it:
+
+```yaml
+# ship.yaml
+components:
+  stack:
+    type: external
+    workflow: .github/workflows/deploy.yml
+```
+
+```yaml
+jobs:
+  gate:
+    permissions: { contents: read, checks: read, deployments: read }
+    uses: ideaSquared/shipper/.github/workflows/gate.yml@v1
+    with: { environment: staging }
+    secrets: inherit
+  deploy:
+    needs: gate
+    uses: ./.github/workflows/deploy.yml     # the repo's own, with a workflow_call trigger
+    with: { environment: staging }
+    secrets: inherit
+  report:
+    needs: [gate, deploy]
+    if: always() && needs.gate.result == 'success'
+    uses: ideaSquared/shipper/.github/workflows/report.yml@v1
+    with: { environment: staging, outcome: '${{ needs.deploy.result }}' }
+    secrets: inherit
+```
+
+- The gate is the same as `deploy.yml`'s; a blocked commit fails the run and posts "blocked".
+- The repo's deploy job runs in the GitHub Environment (without `deployment: false`), so GitHub
+  records the Deployment for the run's commit, which is what `ship status`, the gate and the
+  board read.
+- The report posts the usual Discord message with the commit range since the last live commit.
+- `ship deploy`, `ship status`, `ship diff` and `ship log` work as for any product;
+  `ship rollback` needs the repo's own rollback workflow named in `dispatch.rollbackWorkflow`.
+
 ## Versions
 
 Product repos use the `v1` tag, and the workflow checks out its own scripts at `v1` too

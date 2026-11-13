@@ -87,6 +87,9 @@ export async function deployComponents(options) {
         const results = await previous;
         if (results.some((result) => result.status !== 'deployed'))
             return [...results, { name, status: 'skipped' }];
+        if (component.type === 'external') {
+            return [...results, { name, status: 'failed', detail: `deployed by ${component.workflow}, not by shipper's deploy job: call gate.yml and report.yml around it` }];
+        }
         return [...results, await deployOne(name, component, options)];
     }, Promise.resolve([]));
 }

@@ -22,6 +22,14 @@ const CloudflareWorkerSchema = z.strictObject({
     // it leaves out has no health check.
     health: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
 });
+// Deployed by the repo's own workflow, which calls shipper's gate.yml before it and report.yml
+// after it. Listed so ship.yaml says how the product deploys; shipper's deploy job refuses it.
+const ExternalSchema = z.strictObject({
+    type: z.literal('external'),
+    // Where the deploy happens, e.g. ".github/workflows/deploy.yml".
+    workflow: z.string().min(1),
+});
+const ComponentSchema = z.discriminatedUnion('type', [CloudflareWorkerSchema, ExternalSchema]);
 export const ManifestSchema = z
     .strictObject({
     product: z.string().regex(NAME),
@@ -41,7 +49,7 @@ export const ManifestSchema = z
     })
         .optional(),
     // Deployed in the order written; a failure stops the rest.
-    components: z.record(z.string().regex(NAME), CloudflareWorkerSchema),
+    components: z.record(z.string().regex(NAME), ComponentSchema),
 })
     .superRefine((manifest, ctx) => {
     if (Object.keys(manifest.environments).length === 0) {
@@ -57,7 +65,7 @@ export const ManifestSchema = z
         path: ['environments', name, 'requires'],
         message: required === name ? `'${name}' cannot require itself` : `unknown environment '${required}'`,
     })));
-    Object.entries(manifest.components).forEach(([name, component]) => Object.keys(typeof component.health === 'object' ? component.health : {})
+    Object.entries(manifest.components).forEach(([name, component]) => Object.keys(component.type === 'cloudflare-worker' && typeof component.health === 'object' ? component.health : {})
         .filter((env) => !(env in manifest.environments))
         .forEach((env) => ctx.addIssue({ code: 'custom', path: ['components', name, 'health', env], message: `unknown environment '${env}'` })));
 });
