@@ -71,8 +71,10 @@ async function main(): Promise<number> {
   const print = (line: string) => console.log(line);
   const choice = { repo: values.repo, product, remote: quiet('git', ['remote', 'get-url', 'origin']) };
 
-  // `ship status` outside any product's folder, or `ship status all`: every product at once.
-  const wantsAll = environment === 'all' || (!choice.repo && !choice.product && !repoFromRemote(choice.remote ?? ''));
+  // `ship status` outside any product's folder (including another repo's), or `ship status all`.
+  const remoteRepo = repoFromRemote(choice.remote ?? '')?.toLowerCase();
+  const inProductFolder = Object.values(PRODUCTS).some((repo) => repo.toLowerCase() === remoteRepo);
+  const wantsAll = environment === 'all' || (!choice.repo && !choice.product && !inProductFolder);
   if (command === 'status' && wantsAll) {
     return statusAll(PRODUCTS, (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
   }

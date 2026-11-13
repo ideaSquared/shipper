@@ -55,11 +55,12 @@ export async function statusAll(products, load, print, style) {
         const lines = [];
         try {
             await status(await load(repo, (line) => lines.push(line)));
+            return lines;
         }
         catch (error) {
-            lines.push(`⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`);
+            // One line per product that can't be read, never a half-printed section above it.
+            return [`⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`];
         }
-        return lines;
     }));
     sections.forEach((lines, index) => {
         if (index > 0)
