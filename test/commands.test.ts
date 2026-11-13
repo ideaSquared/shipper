@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deploy, diff, loadContext, log, pickEnvironment, status, type Context, type DeployOptions } from '../src/commands.ts';
 import type { DeploymentSummary, GitHubClient, JobSummary, RunSummary } from '../src/github.ts';
 import { parseManifest } from '../src/manifest.ts';
+import { plain } from '../src/style.ts';
 
 const HEAD = 'cccccccc11111111cccccccc11111111cccccccc';
 const LIVE = 'aaaaaaaa22222222aaaaaaaa22222222aaaaaaaa';
@@ -77,6 +78,7 @@ function context(client: Fake, manifest = MANIFEST): { ctx: Context; lines: stri
     print: (line) => lines.push(line),
     canWrite: true,
     timeZone: 'UTC',
+    style: plain,
   };
   return { ctx, lines };
 }
@@ -116,8 +118,8 @@ describe('status', () => {
     const { ctx, lines } = context(fakeClient());
     expect(await status(ctx)).toBe(0);
     expect(lines).toEqual([
-      'gaminginit-bot (acme/app) · main is at ccccccc',
-      '  production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind',
+      '🚢 gaminginit-bot (acme/app) · main is at ccccccc',
+      '🟡 production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind',
     ]);
   });
 
@@ -128,7 +130,7 @@ describe('status', () => {
 
     const never = context(fakeClient({ deployments: async () => [] }));
     await status(never.ctx);
-    expect(never.lines[1]).toBe('  production   never deployed');
+    expect(never.lines[1]).toBe('⚪ production   never deployed');
   });
 });
 
@@ -137,10 +139,10 @@ describe('diff', () => {
     const { ctx, lines } = context(fakeClient());
     await diff(ctx, undefined);
     expect(lines).toEqual([
-      'production: aaaaaaa → ccccccc · 2 commits waiting',
-      '  ccccccc newest feature · octocat',
-      '  bbbbbbb older fix · hubot',
-      '  https://github.com/acme/app/compare/a...c',
+      '📦 production: aaaaaaa → ccccccc · 2 commits waiting',
+      '   ccccccc newest feature · octocat',
+      '   bbbbbbb older fix · hubot',
+      '🔗 https://github.com/acme/app/compare/a...c',
     ]);
   });
 });
@@ -149,7 +151,7 @@ describe('log', () => {
   it('lists recent deploys with their state', async () => {
     const { ctx, lines } = context(fakeClient());
     await log(ctx, 'production', 10);
-    expect(lines).toEqual(['  13 Nov, 20:42  aaaaaaa  success     octocat', '  13 Nov, 19:30  ddddddd  inactive    hubot']);
+    expect(lines).toEqual(['✅ 13 Nov, 20:42  aaaaaaa  success     octocat', '💤 13 Nov, 19:30  ddddddd  inactive    hubot']);
   });
 });
 
@@ -160,13 +162,13 @@ describe('deploy', () => {
     expect(await deploy(ctx, undefined, options())).toBe(0);
     expect(client.dispatched).toEqual([{ workflow: 'ci.yml', ref: 'main', inputs: {} }]);
     expect(lines).toEqual([
-      'aaaaaaa → ccccccc · 2 commits',
-      '  ccccccc newest feature · octocat',
-      '  bbbbbbb older fix · hubot',
-      'Started: https://github.com/acme/app/actions/runs/7',
-      '  test: success',
-      '  deploy / Deploy (production): success',
-      'Shipped ccccccc to production.',
+      '📦 aaaaaaa → ccccccc · 2 commits',
+      '   ccccccc newest feature · octocat',
+      '   bbbbbbb older fix · hubot',
+      '▶️  Started: https://github.com/acme/app/actions/runs/7',
+      '   ✅ test: success',
+      '   ✅ deploy / Deploy (production): success',
+      '🚀 Shipped ccccccc to production.',
     ]);
   });
 
@@ -183,7 +185,7 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines).toEqual(["Can't ship ccccccc to production:", "  • check 'test' did not pass"]);
+    expect(lines).toEqual(["⛔ Can't ship ccccccc to production:", "   • check 'test' did not pass"]);
   });
 
   it('does nothing when the commit is already live, unless asked to redeploy', async () => {
@@ -202,7 +204,7 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options({ yes: false, confirm: async () => false }))).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines.at(-1)).toBe('Not shipped.');
+    expect(lines.at(-1)).toBe('🙅 Not shipped.');
   });
 
   it('reports a failed run with its link', async () => {
@@ -212,7 +214,7 @@ describe('deploy', () => {
     });
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
-    expect(lines.at(-1)).toBe('Deploy failure: https://run/7');
+    expect(lines.at(-1)).toBe('💥 Deploy failure: https://run/7');
   });
 
   it('needs a dispatch workflow and a token', async () => {
@@ -221,5 +223,14 @@ describe('deploy', () => {
 
     const readOnly = context(fakeClient());
     await expect(deploy({ ...readOnly.ctx, canWrite: false }, undefined, options())).rejects.toThrow('needs a GitHub token');
+  });
+
+  it('colours by meaning when the terminal supports it', async () => {
+    const tag = (name: string) => (text: string) => `<${name}>${text}</${name}>`;
+    const style = { ok: tag('ok'), warn: tag('warn'), bad: tag('bad'), dim: tag('dim'), bold: tag('b'), sha: tag('sha'), env: tag('env'), link: tag('link') };
+    const failing = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'failure' }] });
+    const { ctx, lines } = context(failing);
+    await deploy({ ...ctx, style }, undefined, options());
+    expect(lines).toEqual(["⛔ <bad>Can't ship ccccccc to production:</bad>", "   • <bad>check 'test' did not pass</bad>"]);
   });
 });

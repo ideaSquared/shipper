@@ -32,6 +32,9 @@ ship production gaminginit-bot             # same as deploy
   that is already live.
 - Nothing builds on your machine: the deploy runs in GitHub Actions, so the Discord message names
   you as the person who shipped.
+- Output uses colour and emojis. Colour turns off when the output is piped or `NO_COLOR` is set.
+  Emojis need a modern terminal (Windows Terminal, VS Code, macOS, Linux); the old built-in
+  Windows `cmd` window shows them as boxes.
 
 For `ship deploy`, `ship.yaml` says which workflow to start. It must have a `workflow_dispatch`
 trigger and call the shipper workflow:
