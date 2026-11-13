@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateGate, type GateFacts } from '../src/gate.ts';
+import { evaluateGate, liveFailure, type GateFacts } from '../src/gate.ts';
 import { parseManifest } from '../src/manifest.ts';
 
 const manifest = parseManifest(`
@@ -78,5 +78,30 @@ describe('evaluateGate', () => {
     ]);
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'ahead' } }).ok).toBe(true);
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'identical' } }).ok).toBe(true);
+  });
+
+  it('lets a rollback put back an older commit, but only one that was live on that environment', () => {
+    const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
+    const older = { ...passing, live: { sha: LIVE, relation: 'behind' }, rollback: true };
+    expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({ ok: true, failures: [] });
+    expect(evaluateGate(manifest, 'production', older).failures).toEqual([
+      "abcdef1 was never live on production, so it can't be a rollback target",
+    ]);
+  });
+
+  it('keeps every other rule for a rollback', () => {
+    const result = evaluateGate(manifest, 'production', { ...passing, rollback: true, deployedTo: ['production'], onDefaultBranch: false });
+    expect(result.failures).toEqual(['abcdef1 is not on main', 'abcdef1 has not been deployed successfully to staging']);
+  });
+});
+
+describe('liveFailure', () => {
+  it('blocks an older commit unless it is a rollback to a commit that was live', () => {
+    const live = { sha: 'fedcba9876543210fedcba9876543210fedcba98', relation: 'behind' };
+    expect(liveFailure({ sha: SHA, live, deployedTo: [] }, 'staging')).toBe('abcdef1 is older than fedcba9, which is live on staging');
+    expect(liveFailure({ sha: SHA, live, deployedTo: ['staging'], rollback: true }, 'staging')).toBeUndefined();
+    expect(liveFailure({ sha: SHA, deployedTo: [], rollback: true }, 'staging')).toBe(
+      "abcdef1 was never live on staging, so it can't be a rollback target",
+    );
   });
 });

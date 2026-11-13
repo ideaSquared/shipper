@@ -5,14 +5,20 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { deployComponents, renderSummary } from "./cloudflare.js";
-import { evaluateGate, staleFailure } from "./gate.js";
-import { createGitHubClient } from "./github.js";
+import { evaluateGate, liveFailure } from "./gate.js";
+import { createGitHubClient, GitHubApiError } from "./github.js";
 import { environmentOf, parseManifest } from "./manifest.js";
 import { buildReport, outcomeOf, sendReport } from "./notify.js";
 const EnvSchema = z.object({
     SHIP_REPO_ROOT: z.string().min(1),
     GITHUB_REPOSITORY: z.string().min(1),
-    GITHUB_SHA: z.string().min(1),
+    // The commit to deploy: the workflow's `sha` input, or the run's own commit.
+    SHIP_SHA: z.string().min(1),
+    // `rollback: true`: put back a commit that was live before, even though it is older than what is live.
+    SHIP_ROLLBACK: z
+        .enum(['true', 'false'])
+        .default('false')
+        .transform((value) => value === 'true'),
     GITHUB_ACTOR: z.string().default('unknown'),
     GITHUB_STEP_SUMMARY: z.string().optional(),
     GITHUB_SERVER_URL: z.string().default('https://github.com'),
@@ -22,8 +28,8 @@ const EnvSchema = z.object({
     SHIP_NOTIFY_SECRET: z.string().optional(),
 });
 // Streams the command's output to the job log and also returns it.
-const run = (command, args, cwd) => new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+const run = (command, args, cwd, extraEnv = {}) => new Promise((resolve) => {
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
     const collect = (stream) => (chunk) => {
         chunks.push(chunk.toString());
@@ -39,6 +45,7 @@ function annotate(title, message, level = 'error') {
     const encode = (text) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
     console.log(`::${level} title=${encode(title)}::${encode(message)}`);
 }
+const runUrlOf = (env) => `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 // Sends the deploy message to Discord through the ideaSquared bot. Only ever warns.
 async function notify(env, manifest, input) {
     if (!manifest.discord) {
@@ -56,8 +63,8 @@ async function notify(env, manifest, input) {
         repository: env.GITHUB_REPOSITORY,
         actor: env.GITHUB_ACTOR,
         at: new Date(),
-        sha: env.GITHUB_SHA,
-        runUrl: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`,
+        sha: env.SHIP_SHA,
+        runUrl: runUrlOf(env),
     });
     const sent = await sendReport(env.SHIP_NOTIFY_URL, env.SHIP_NOTIFY_SECRET, report);
     if (sent.ok)
@@ -93,27 +100,50 @@ async function liveFacts(github, environment, sha, live) {
         return undefined;
     });
 }
+// Shipper records the Deployment itself (the deploy job sets `deployment: false`), so it names the
+// commit really deployed rather than the run's own commit.
+async function createDeployment(github, env, environment) {
+    return github
+        .createDeployment({ sha: env.SHIP_SHA, environment, actor: env.GITHUB_ACTOR, production: environment === 'production' })
+        .then((id) => ({ id }))
+        .catch((error) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
+            return { error: `Could not create a GitHub Deployment (${reason}). The job that calls shipper must grant \`permissions: deployments: write\`.` };
+        }
+        return { error: `Could not create a GitHub Deployment: ${reason}` };
+    });
+}
+// Posts a Deployment status; returns false (after saying why) if GitHub did not take it.
+async function recordStatus(github, id, status) {
+    return github.setDeploymentStatus(id, status).then(() => true, (error) => {
+        annotate('Ship', `Could not mark the GitHub Deployment ${status.state}: ${String(error)}`, status.state === 'in_progress' ? 'warning' : 'error');
+        return false;
+    });
+}
 async function gate(environment) {
     const env = EnvSchema.extend({ DEFAULT_BRANCH: z.string().min(1) }).parse(process.env);
     const manifest = loadManifest(env.SHIP_REPO_ROOT);
     const required = environmentOf(manifest, environment).requires;
     const github = createGitHubClient(env.GITHUB_REPOSITORY, env.GITHUB_TOKEN);
+    // A rollback target must have been live here before; a normal deploy must not be older than live.
     const [onDefaultBranch, checkRuns, deployedTo, liveSha] = await Promise.all([
-        github.isOnBranch(env.GITHUB_SHA, env.DEFAULT_BRANCH),
-        manifest.checks.length > 0 ? github.checkRuns(env.GITHUB_SHA) : Promise.resolve([]),
-        github.deployedTo(env.GITHUB_SHA, required),
-        github.lastSuccessfulDeployment(environment).catch(() => undefined),
+        github.isOnBranch(env.SHIP_SHA, env.DEFAULT_BRANCH),
+        manifest.checks.length > 0 ? github.checkRuns(env.SHIP_SHA) : Promise.resolve([]),
+        github.deployedTo(env.SHIP_SHA, env.SHIP_ROLLBACK ? [...required, environment] : required),
+        env.SHIP_ROLLBACK ? Promise.resolve(undefined) : github.lastSuccessfulDeployment(environment).catch(() => undefined),
     ]);
     const result = evaluateGate(manifest, environment, {
-        sha: env.GITHUB_SHA,
+        sha: env.SHIP_SHA,
         defaultBranch: env.DEFAULT_BRANCH,
         onDefaultBranch,
         checkRuns,
         deployedTo,
-        live: await liveFacts(github, environment, env.GITHUB_SHA, liveSha),
+        live: await liveFacts(github, environment, env.SHIP_SHA, liveSha),
+        rollback: env.SHIP_ROLLBACK,
     });
     if (result.ok) {
-        console.log(`Gate passed: ${env.GITHUB_SHA.slice(0, 7)} can deploy to ${environment}.`);
+        console.log(`Gate passed: ${env.SHIP_SHA.slice(0, 7)} can deploy to ${environment}.`);
         return 0;
     }
     result.failures.forEach((failure) => annotate('Ship gate', failure));
@@ -138,37 +168,59 @@ async function deploy(environment) {
         return undefined;
     });
     // Checked again here, inside the one-deploy-at-a-time job: a newer commit may have shipped while
-    // this run waited, or this may be a re-run of an old run.
-    const stale = staleFailure(env.GITHUB_SHA, environment, await liveFacts(github, environment, env.GITHUB_SHA, previousSha));
-    if (stale) {
-        annotate('Ship', `${stale}. Not deploying an older commit over a newer one.`);
-        summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${stale}\n`);
-        await notify(env, manifest, { environment, outcome: 'blocked', failures: [stale] });
+    // this run waited, or this may be a re-run of an old run. A rollback instead re-checks its target was live.
+    const blocked = liveFailure({
+        sha: env.SHIP_SHA,
+        rollback: env.SHIP_ROLLBACK,
+        live: env.SHIP_ROLLBACK ? undefined : await liveFacts(github, environment, env.SHIP_SHA, previousSha),
+        deployedTo: env.SHIP_ROLLBACK ? await github.deployedTo(env.SHIP_SHA, [environment]) : [],
+    }, environment);
+    if (blocked) {
+        annotate('Ship', env.SHIP_ROLLBACK ? `${blocked}.` : `${blocked}. Not deploying an older commit over a newer one.`);
+        summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${blocked}\n`);
+        await notify(env, manifest, { environment, outcome: 'blocked', failures: [blocked] });
         return 1;
     }
+    const created = await createDeployment(github, env, environment);
+    if ('error' in created) {
+        annotate('Ship', created.error);
+        await notify(env, manifest, { environment, outcome: 'failed', failures: [created.error] });
+        return 1;
+    }
+    const deployment = created.id;
+    const logUrl = runUrlOf(env);
+    await recordStatus(github, deployment, { state: 'in_progress', logUrl });
     const results = await deployComponents({
         manifest,
         environment,
-        sha: env.GITHUB_SHA,
+        sha: env.SHIP_SHA,
         actor: env.GITHUB_ACTOR,
         repoRoot: env.SHIP_REPO_ROOT,
         run,
         fetch,
         sleep: (ms) => sleep(ms),
+    }).catch(async (error) => {
+        await recordStatus(github, deployment, { state: 'failure', logUrl });
+        throw error;
     });
     results.forEach((result) => console.log([`${result.name}: ${result.status}`, result.url, result.detail].filter(Boolean).join(' · ')));
-    summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.GITHUB_SHA, results));
+    summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.SHIP_SHA, results));
     results
         .filter((result) => result.status === 'failed' || result.status === 'rolled-back')
         .forEach((result) => annotate(`Ship ${result.name}`, result.detail ?? result.status));
+    const shipped = results.every((result) => result.status === 'deployed');
+    // GitHub's record is what the gate reads next time (requires, stale checks), so failing to write it fails the job.
+    const recorded = await recordStatus(github, deployment, shipped
+        ? { state: 'success', logUrl, environmentUrl: results.find((result) => result.url)?.url }
+        : { state: 'failure', logUrl });
     await notify(env, manifest, {
         environment,
         outcome: outcomeOf(results),
         previousSha,
-        comparison: await changesSince(github, previousSha, env.GITHUB_SHA),
+        comparison: await changesSince(github, previousSha, env.SHIP_SHA),
         components: results,
     });
-    return results.every((result) => result.status === 'deployed') ? 0 : 1;
+    return shipped && recorded ? 0 : 1;
 }
 const COMMANDS = { gate, deploy };
 const [command, environment] = process.argv.slice(2);

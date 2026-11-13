@@ -59,6 +59,22 @@ components: { bot: { type: cloudflare-worker } }
     ).toThrow(/unknown environment 'staging'/);
   });
 
+  it('takes a health check per environment, naming only environments it has', () => {
+    const manifest = parseManifest(`
+product: x
+environments: { staging: {}, production: {} }
+components: { api: { type: cloudflare-worker, health: { staging: /health, production: https://x.dev/health } } }
+`);
+    expect(manifest.components.api?.health).toEqual({ staging: '/health', production: 'https://x.dev/health' });
+    expect(() =>
+      parseManifest(`
+product: x
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: { prod: /health } } }
+`),
+    ).toThrow(/components\.api\.health\.prod: unknown environment 'prod'/);
+  });
+
   it('rejects a manifest with no components', () => {
     expect(() => parseManifest('product: x\nenvironments: { production: {} }\ncomponents: {}\n')).toThrow(
       /at least one component/,

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { environmentOf } from "./manifest.js";
+import { environmentOf, healthFor } from "./manifest.js";
 // The URLs wrangler prints for the Worker it just deployed. Wrangler puts each one on a line of its own
 // under "Deployed <name> triggers"; URLs elsewhere (a var's value, a docs link) share their line with
 // other text, so only bare URL lines count.
@@ -53,7 +53,8 @@ async function deployOne(name, component, options) {
     const short = sha.slice(0, 7);
     const wrangler = (args) => run('pnpm', ['exec', 'wrangler', ...args, ...envArgs], cwd);
     if (component.build) {
-        const build = await run('bash', ['-c', component.build], repoRoot);
+        const buildEnv = { SHIP_ENVIRONMENT: options.environment, SHIP_WRANGLER_ENV: wranglerEnv ?? '' };
+        const build = await run('bash', ['-c', component.build], repoRoot, buildEnv);
         if (build.code !== 0)
             return { name, status: 'failed', detail: 'build failed' };
     }
@@ -68,7 +69,10 @@ async function deployOne(name, component, options) {
     const url = parseDeployedUrls(deploy.output)[0];
     if (!component.health)
         return { name, status: 'deployed', url };
-    const health = await checkHealth(component.health, deploy.output, options);
+    const healthPath = healthFor(component, options.environment);
+    if (!healthPath)
+        return { name, status: 'deployed', url, detail: `no health check for ${options.environment}` };
+    const health = await checkHealth(healthPath, deploy.output, options);
     if (health.ok)
         return { name, status: 'deployed', url, detail: `health check passed: ${health.detail}` };
     const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';

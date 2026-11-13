@@ -20,12 +20,12 @@ Deployed wardogs-discord-bot triggers (0.80 sec)
 Current Version ID: 1111-2222
 `;
 
-type Call = { command: string; args: readonly string[]; cwd: string };
+type Call = { command: string; args: readonly string[]; cwd: string; env?: Readonly<Record<string, string>> };
 
 function fakeRun(fail: (call: Call) => boolean = () => false): { run: Run; calls: Call[] } {
   const calls: Call[] = [];
-  const run: Run = async (command, args, cwd) => {
-    const call = { command, args, cwd };
+  const run: Run = async (command, args, cwd, env) => {
+    const call = env ? { command, args, cwd, env } : { command, args, cwd };
     calls.push(call);
     if (fail(call)) return { code: 1, output: 'boom' };
     return { code: 0, output: args.includes('deploy') ? WRANGLER_OUTPUT : '' };
@@ -152,6 +152,45 @@ components:
       'pnpm exec wrangler deploy --message ship abcdef1 by octocat --env production',
     ]);
     expect(calls.map((call) => call.cwd)).toEqual(['/repo', '/repo/services/api', '/repo/services/api']);
+  });
+
+  it('tells the build which environment it is building for', async () => {
+    const { run, calls } = fakeRun();
+    const manifest = `
+product: creatrgrid
+environments: { staging: { wranglerEnv: staging }, production: {} }
+components: { web: { type: cloudflare-worker, build: pnpm build } }
+`;
+    await deployComponents({ ...options(manifest, run), environment: 'staging' });
+    await deployComponents(options(manifest, run));
+    expect(calls.filter((call) => call.command === 'bash').map((call) => call.env)).toEqual([
+      { SHIP_ENVIRONMENT: 'staging', SHIP_WRANGLER_ENV: 'staging' },
+      { SHIP_ENVIRONMENT: 'production', SHIP_WRANGLER_ENV: '' },
+    ]);
+  });
+
+  it('checks the health URL set for the environment, and skips the check where none is set', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { staging: {}, production: {} }
+components:
+  api: { type: cloudflare-worker, health: { production: https://api.example.com/health } }
+`;
+    const checked: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      checked.push(String(input));
+      return new Response(null, { status: 200 });
+    };
+    const production = await deployComponents(options(manifest, fakeRun().run, fetchImpl));
+    expect(production[0]?.detail).toBe('health check passed: https://api.example.com/health answered');
+    const staging = await deployComponents({ ...options(manifest, fakeRun().run, fetchImpl), environment: 'staging' });
+    expect(staging[0]).toEqual({
+      name: 'api',
+      status: 'deployed',
+      url: 'https://wardogs-discord-bot.example.workers.dev',
+      detail: 'no health check for staging',
+    });
+    expect(checked).toEqual(['https://api.example.com/health']);
   });
 
   it('does not deploy when migrations fail', async () => {

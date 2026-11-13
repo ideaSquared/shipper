@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import type { Component, Manifest } from './manifest.ts';
-import { environmentOf } from './manifest.ts';
+import { environmentOf, healthFor } from './manifest.ts';
 
 export type RunResult = { code: number; output: string };
-export type Run = (command: string, args: readonly string[], cwd: string) => Promise<RunResult>;
+// `env` is added to the process environment of the command.
+export type Run = (command: string, args: readonly string[], cwd: string, env?: Readonly<Record<string, string>>) => Promise<RunResult>;
 export type Sleep = (ms: number) => Promise<void>;
 
 export type ComponentStatus = 'deployed' | 'failed' | 'rolled-back' | 'skipped';
@@ -96,7 +97,8 @@ async function deployOne(name: string, component: Component, options: DeployOpti
   const wrangler = (args: readonly string[]) => run('pnpm', ['exec', 'wrangler', ...args, ...envArgs], cwd);
 
   if (component.build) {
-    const build = await run('bash', ['-c', component.build], repoRoot);
+    const buildEnv = { SHIP_ENVIRONMENT: options.environment, SHIP_WRANGLER_ENV: wranglerEnv ?? '' };
+    const build = await run('bash', ['-c', component.build], repoRoot, buildEnv);
     if (build.code !== 0) return { name, status: 'failed', detail: 'build failed' };
   }
 
@@ -110,8 +112,10 @@ async function deployOne(name: string, component: Component, options: DeployOpti
   const url = parseDeployedUrls(deploy.output)[0];
 
   if (!component.health) return { name, status: 'deployed', url };
+  const healthPath = healthFor(component, options.environment);
+  if (!healthPath) return { name, status: 'deployed', url, detail: `no health check for ${options.environment}` };
 
-  const health = await checkHealth(component.health, deploy.output, options);
+  const health = await checkHealth(healthPath, deploy.output, options);
   if (health.ok) return { name, status: 'deployed', url, detail: `health check passed: ${health.detail}` };
 
   const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';

@@ -1,4 +1,13 @@
 import { z } from 'zod';
+// A GitHub API call that did not succeed, with its HTTP status so callers can explain 403s and 404s.
+export class GitHubApiError extends Error {
+    status;
+    constructor(message, status) {
+        super(message);
+        this.name = 'GitHubApiError';
+        this.status = status;
+    }
+}
 const CompareSchema = z.object({
     status: z.string(),
     total_commits: z.number().default(0),
@@ -30,6 +39,7 @@ const RunSchema = z.object({
     created_at: z.string(),
 });
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
+const CreatedSchema = z.object({ id: z.number() });
 const JobsSchema = z.object({
     jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
 });
@@ -60,7 +70,8 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
                 .json()
                 .then((body) => (typeof body === 'object' && body && 'message' in body ? `: ${String(body.message)}` : ''))
                 .catch(() => '');
-            throw new Error(`GitHub API ${url.replace(`${BASE}/repos/${repository}`, '') || '/'} returned ${response.status}${detail}`);
+            const path = url.replace(`${BASE}/repos/${repository}`, '') || '/';
+            throw new GitHubApiError(`GitHub API ${path} returned ${response.status}${detail}`, response.status);
         }
         return response;
     }
@@ -187,6 +198,35 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
         },
         async jobs(runId) {
             return getAll(`/actions/runs/${runId}/jobs?per_page=100`, JobsSchema, (page) => page.jobs);
+        },
+        async createDeployment({ sha, environment, actor, production }) {
+            const response = await request(`${BASE}/repos/${repository}/deployments`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    ref: sha,
+                    environment,
+                    // The gate has already checked the commit; GitHub must not merge or wait on checks itself.
+                    auto_merge: false,
+                    required_contexts: [],
+                    transient_environment: false,
+                    production_environment: production,
+                    description: `ship ${sha.slice(0, 7)} by ${actor}`,
+                    payload: { actor },
+                }),
+            });
+            return CreatedSchema.parse(await response.json()).id;
+        },
+        async setDeploymentStatus(id, { state, logUrl, environmentUrl, description }) {
+            const response = await request(`${BASE}/repos/${repository}/deployments/${id}/statuses`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    state,
+                    ...(logUrl ? { log_url: logUrl } : {}),
+                    ...(environmentUrl ? { environment_url: environmentUrl } : {}),
+                    ...(description ? { description } : {}),
+                }),
+            });
+            CreatedSchema.parse(await response.json());
         },
         async deployedTo(sha, environments) {
             const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));
