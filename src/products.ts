@@ -1,7 +1,10 @@
 // Products deployed with shipper, so `ship <command> <product>` works from any folder.
 // Add a line when a repo starts using ship.yaml.
 export const PRODUCTS: Readonly<Record<string, string>> = {
+  creatrgrid: 'ideaSquared/creatrgrid',
+  gaminginit: 'ideaSquared/gaminginit',
   'gaminginit-bot': 'ideaSquared/gaminginit-bot',
+  'ideasquared-bot': 'ideaSquared/ideasquared-bot',
 };
 
 // owner/name from a GitHub remote URL (https or ssh), or undefined for anything else.
