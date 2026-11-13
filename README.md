@@ -4,8 +4,46 @@ Deploy tooling for every ideaSquared product. Each product repo describes what i
 `ship.yaml`, and calls one shared GitHub Actions workflow to deploy it. The idea comes from Monzo's
 Shipper: one way to deploy, with the safety rules built into the tool rather than written down.
 
-This is step 1 of the plan: the manifest, the gate and the Cloudflare Workers deploy. The `ship`
-command-line tool comes next.
+It has three parts: the manifest and the shared workflow (gate, Cloudflare Workers deploy, health
+check and rollback, Discord message), and the `ship` command-line tool.
+
+## The ship command
+
+```bash
+pnpm add -g github:ideaSquared/shipper     # install or update
+```
+
+```bash
+ship status gaminginit-bot                 # what is live in each environment, and how far behind main
+ship diff gaminginit-bot                   # the commits waiting to ship
+ship log gaminginit-bot -n 10              # recent deploys and their state
+ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
+ship production gaminginit-bot             # same as deploy
+```
+
+- It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
+  it inside the repo's checkout and leave the product out.
+- The environment is optional when `ship.yaml` has only one.
+- It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
+  work without a token on public repos, within GitHub's rate limit.
+- `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits
+  going out, asks before it starts (`--yes` skips that), starts the repo's deploy workflow and
+  prints each job as it finishes. `--no-wait` starts it and exits. `--redeploy` deploys a commit
+  that is already live.
+- Nothing builds on your machine: the deploy runs in GitHub Actions, so the Discord message names
+  you as the person who shipped.
+
+For `ship deploy`, `ship.yaml` says which workflow to start. It must have a `workflow_dispatch`
+trigger and call the shipper workflow:
+
+```yaml
+dispatch:
+  workflow: ci.yml                 # file in .github/workflows
+  environmentInput: environment    # the workflow input that takes the environment (optional)
+```
+
+`dist/` holds the compiled CLI and is committed, so installing from GitHub needs no build. Run
+`pnpm build` after changing `src/`; CI fails if `dist/` is out of date.
 
 ## What a deploy does
 
@@ -45,6 +83,7 @@ or the bot posts GitHub's plainer deployment message as well.
 ```yaml
 product: creatrgrid
 discord: creatrgrid              # bot project for the deploy message (optional)
+dispatch: { workflow: deploy.yml, environmentInput: environment }   # for ship deploy (optional)
 checks: [verify, e2e]            # check runs that must pass on the commit (optional)
 environments:
   staging:

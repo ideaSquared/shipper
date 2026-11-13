@@ -157,4 +157,58 @@ describe('createGitHubClient', () => {
     };
     expect(await createGitHubClient('acme/app', 'token', fetchImpl).lastSuccessfulDeployment('production')).toBe('good');
   });
+
+  it('starts a workflow on a branch with its inputs, with a User-Agent and token', async () => {
+    const seen: { url: string; init?: RequestInit }[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      seen.push({ url: String(input), init });
+      return new Response(null, { status: 204 });
+    };
+    await createGitHubClient('acme/app', 'token', fetchImpl).dispatchWorkflow('ci.yml', 'main', { environment: 'staging' });
+    expect(seen[0]?.url).toBe('https://api.github.com/repos/acme/app/actions/workflows/ci.yml/dispatches');
+    expect(seen[0]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({ ref: 'main', inputs: { environment: 'staging' } });
+    const headers = new Headers(seen[0]?.init?.headers);
+    expect(headers.get('user-agent')).toBe('ideasquared-ship');
+    expect(headers.get('authorization')).toBe('Bearer token');
+  });
+
+  it('reads public data without a token', async () => {
+    const seen: Headers[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      seen.push(new Headers(init?.headers));
+      return new Response(JSON.stringify({ default_branch: 'main' }));
+    };
+    expect(await createGitHubClient('acme/app', undefined, fetchImpl).defaultBranch()).toBe('main');
+    expect(seen[0]?.has('authorization')).toBe(false);
+  });
+
+  it('decodes ship.yaml from the contents API and returns nothing for a missing file', async () => {
+    const { fetch } = fakeFetch({
+      '/contents/ship.yaml?ref=main': { content: Buffer.from('product: x\n').toString('base64'), encoding: 'base64' },
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.readFile('ship.yaml', 'main')).toBe('product: x\n');
+    expect(await github.readFile('missing.yaml', 'main')).toBeUndefined();
+  });
+
+  it('finds the run a dispatch started, ignoring older runs', async () => {
+    const run = (id: number, created_at: string) => ({ id, status: 'queued', conclusion: null, html_url: `u${id}`, created_at });
+    const { fetch } = fakeFetch({
+      '/actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=10': {
+        workflow_runs: [run(2, '2026-11-13T21:00:05Z'), run(1, '2026-11-13T19:00:00Z')],
+      },
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect((await github.findDispatchedRun('ci.yml', new Date('2026-11-13T21:00:00Z')))?.id).toBe(2);
+    expect(await github.findDispatchedRun('ci.yml', new Date('2026-11-13T22:00:00Z'))).toBeUndefined();
+  });
+
+  it("includes GitHub's own message in errors", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(JSON.stringify({ message: 'API rate limit exceeded' }), { status: 403 });
+    await expect(createGitHubClient('acme/app', undefined, fetchImpl).defaultBranch()).rejects.toThrow(
+      'GitHub API / returned 403: API rate limit exceeded',
+    );
+  });
 });
