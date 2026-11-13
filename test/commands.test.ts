@@ -64,6 +64,8 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
       { name: 'test', status: 'completed', conclusion: 'success' },
       { name: 'deploy / Deploy (production)', status: 'completed', conclusion: 'success' },
     ],
+    createDeployment: async () => 1,
+    setDeploymentStatus: async () => {},
   };
   return Object.assign({ ...base, ...overrides }, { dispatched });
 }

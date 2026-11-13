@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGitHubClient } from '../src/github.ts';
+import { createGitHubClient, GitHubApiError } from '../src/github.ts';
 
 function fakeFetch(routes: Record<string, unknown>): { fetch: typeof fetch; urls: string[] } {
   const urls: string[] = [];
@@ -215,5 +215,48 @@ describe('createGitHubClient', () => {
   it("reads GitHub's compare status between two commits", async () => {
     const { fetch } = fakeFetch({ '/compare/live...old?per_page=1': { status: 'behind' } });
     expect(await createGitHubClient('acme/app', 'token', fetch).relation('live', 'old')).toBe('behind');
+  });
+
+  it('records a Deployment of the exact commit, then its statuses', async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      seen.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ id: 42, state: 'x' }), { status: 201 });
+    };
+    const github = createGitHubClient('acme/app', 'token', fetchImpl);
+    const sha = 'abcdef1234567890abcdef1234567890abcdef12';
+    expect(await github.createDeployment({ sha, environment: 'production', actor: 'octocat', production: true })).toBe(42);
+    await github.setDeploymentStatus(42, { state: 'in_progress', logUrl: 'https://run/1' });
+    await github.setDeploymentStatus(42, { state: 'success', logUrl: 'https://run/1', environmentUrl: 'https://app.dev' });
+    expect(seen).toEqual([
+      {
+        url: 'https://api.github.com/repos/acme/app/deployments',
+        body: {
+          ref: sha,
+          environment: 'production',
+          auto_merge: false,
+          required_contexts: [],
+          transient_environment: false,
+          production_environment: true,
+          description: 'ship abcdef1 by octocat',
+          payload: { actor: 'octocat' },
+        },
+      },
+      { url: 'https://api.github.com/repos/acme/app/deployments/42/statuses', body: { state: 'in_progress', log_url: 'https://run/1' } },
+      {
+        url: 'https://api.github.com/repos/acme/app/deployments/42/statuses',
+        body: { state: 'success', log_url: 'https://run/1', environment_url: 'https://app.dev' },
+      },
+    ]);
+  });
+
+  it('gives the HTTP status of a refused call, so a missing permission can be explained', async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403 });
+    const error = await createGitHubClient('acme/app', 'token', fetchImpl)
+      .createDeployment({ sha: 'aaa', environment: 'staging', actor: 'o', production: false })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).toMatchObject({ status: 403, message: 'GitHub API /deployments returned 403: Resource not accessible by integration' });
   });
 });

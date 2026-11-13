@@ -21,7 +21,28 @@ export type GitHubClient = {
   findDispatchedRun(workflow: string, since: Date): Promise<RunSummary | undefined>;
   run(id: number): Promise<RunSummary>;
   jobs(runId: number): Promise<JobSummary[]>;
+  // Records a Deployment of `sha` to the environment and returns its id.
+  createDeployment(deployment: NewDeployment): Promise<number>;
+  setDeploymentStatus(id: number, status: NewDeploymentStatus): Promise<void>;
 };
+
+export type NewDeployment = { sha: string; environment: string; actor: string; production: boolean };
+export type NewDeploymentStatus = {
+  state: 'in_progress' | 'success' | 'failure';
+  logUrl?: string;
+  environmentUrl?: string;
+  description?: string;
+};
+
+// A GitHub API call that did not succeed, with its HTTP status so callers can explain 403s and 404s.
+export class GitHubApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'GitHubApiError';
+    this.status = status;
+  }
+}
 
 export type DeploymentSummary = { sha: string; createdAt: string; creator: string; state: string };
 export type RunSummary = { id: number; status: string; conclusion: string | null; url: string; createdAt: string };
@@ -63,6 +84,7 @@ const RunSchema = z.object({
   created_at: z.string(),
 });
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
+const CreatedSchema = z.object({ id: z.number() });
 const JobsSchema = z.object({
   jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
 });
@@ -96,7 +118,8 @@ export function createGitHubClient(repository: string, token: string | undefined
         .json()
         .then((body: unknown) => (typeof body === 'object' && body && 'message' in body ? `: ${String(body.message)}` : ''))
         .catch(() => '');
-      throw new Error(`GitHub API ${url.replace(`${BASE}/repos/${repository}`, '') || '/'} returned ${response.status}${detail}`);
+      const path = url.replace(`${BASE}/repos/${repository}`, '') || '/';
+      throw new GitHubApiError(`GitHub API ${path} returned ${response.status}${detail}`, response.status);
     }
     return response;
   }
@@ -239,6 +262,35 @@ export function createGitHubClient(repository: string, token: string | undefined
     },
     async jobs(runId) {
       return getAll(`/actions/runs/${runId}/jobs?per_page=100`, JobsSchema, (page) => page.jobs);
+    },
+    async createDeployment({ sha, environment, actor, production }) {
+      const response = await request(`${BASE}/repos/${repository}/deployments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ref: sha,
+          environment,
+          // The gate has already checked the commit; GitHub must not merge or wait on checks itself.
+          auto_merge: false,
+          required_contexts: [],
+          transient_environment: false,
+          production_environment: production,
+          description: `ship ${sha.slice(0, 7)} by ${actor}`,
+          payload: { actor },
+        }),
+      });
+      return CreatedSchema.parse(await response.json()).id;
+    },
+    async setDeploymentStatus(id, { state, logUrl, environmentUrl, description }) {
+      const response = await request(`${BASE}/repos/${repository}/deployments/${id}/statuses`, {
+        method: 'POST',
+        body: JSON.stringify({
+          state,
+          ...(logUrl ? { log_url: logUrl } : {}),
+          ...(environmentUrl ? { environment_url: environmentUrl } : {}),
+          ...(description ? { description } : {}),
+        }),
+      });
+      CreatedSchema.parse(await response.json());
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

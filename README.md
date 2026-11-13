@@ -67,8 +67,11 @@ dispatch:
    run `wrangler rollback` to the previous version and fail the deploy. D1 migrations are
    forward-only and are not undone.
 
-The deploy job runs in the GitHub Environment named after the target environment. GitHub records it
-as a Deployment, and the Environment holds the secrets and any required reviewers.
+The deploy job runs in the GitHub Environment named after the target environment, which holds the
+secrets and any required reviewers. Shipper records the GitHub Deployment itself, for the commit it
+deploys: it creates the Deployment once the in-job stale check passes (a blocked deploy is not a
+deployment), marks it `in_progress`, then `success` (with the first deployed URL) or `failure`. The
+job sets `deployment: false` so GitHub doesn't record a second one for the run's own commit.
 
 ## Discord message
 
@@ -171,12 +174,16 @@ jobs:
     permissions:
       contents: read
       checks: read
-      deployments: read
+      deployments: write           # shipper creates the GitHub Deployment
     uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
     with:
       environment: production
     secrets: inherit
 ```
+
+The job must grant `deployments: write`: without it the deploy job stops before deploying, with an
+error saying so. The GitHub Environment from step 2 must still exist; `deployment: false` only stops
+GitHub recording its own Deployment.
 
 The repo must use pnpm: the workflow runs `pnpm install --frozen-lockfile` and `pnpm exec wrangler`.
 

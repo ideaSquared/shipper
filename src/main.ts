@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { deployComponents, renderSummary, type Run } from './cloudflare.ts';
 import { evaluateGate, staleFailure, type GateFacts } from './gate.ts';
-import { createGitHubClient, type GitHubClient } from './github.ts';
+import { createGitHubClient, GitHubApiError, type GitHubClient, type NewDeploymentStatus } from './github.ts';
 import { environmentOf, parseManifest, type Manifest } from './manifest.ts';
 import { buildReport, outcomeOf, sendReport, type Comparison, type ReportInput } from './notify.ts';
 
@@ -45,6 +45,8 @@ function annotate(title: string, message: string, level: 'error' | 'warning' | '
   console.log(`::${level} title=${encode(title)}::${encode(message)}`);
 }
 
+const runUrlOf = (env: ShipEnv) => `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+
 // Sends the deploy message to Discord through the ideaSquared bot. Only ever warns.
 async function notify(env: ShipEnv, manifest: Manifest, input: Omit<ReportInput, 'project' | 'product' | 'repository' | 'actor' | 'at' | 'sha' | 'runUrl'>): Promise<void> {
   if (!manifest.discord) {
@@ -63,7 +65,7 @@ async function notify(env: ShipEnv, manifest: Manifest, input: Omit<ReportInput,
     actor: env.GITHUB_ACTOR,
     at: new Date(),
     sha: env.GITHUB_SHA,
-    runUrl: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`,
+    runUrl: runUrlOf(env),
   });
   const sent = await sendReport(env.SHIP_NOTIFY_URL, env.SHIP_NOTIFY_SECRET, report);
   if (sent.ok) console.log(sent.detail);
@@ -97,6 +99,32 @@ async function liveFacts(github: GitHubClient, environment: string, sha: string,
     (error: unknown) => {
       annotate('Ship', `Could not compare ${sha.slice(0, 7)} with the live ${live.slice(0, 7)}: ${String(error)}`, 'warning');
       return undefined;
+    },
+  );
+}
+
+// Shipper records the Deployment itself (the deploy job sets `deployment: false`), so it names the
+// commit really deployed rather than the run's own commit.
+async function createDeployment(github: GitHubClient, env: ShipEnv, environment: string): Promise<{ id: number } | { error: string }> {
+  return github
+    .createDeployment({ sha: env.GITHUB_SHA, environment, actor: env.GITHUB_ACTOR, production: environment === 'production' })
+    .then((id) => ({ id }))
+    .catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
+        return { error: `Could not create a GitHub Deployment (${reason}). The job that calls shipper must grant \`permissions: deployments: write\`.` };
+      }
+      return { error: `Could not create a GitHub Deployment: ${reason}` };
+    });
+}
+
+// Posts a Deployment status; returns false (after saying why) if GitHub did not take it.
+async function recordStatus(github: GitHubClient, id: number, status: NewDeploymentStatus): Promise<boolean> {
+  return github.setDeploymentStatus(id, status).then(
+    () => true,
+    (error: unknown) => {
+      annotate('Ship', `Could not mark the GitHub Deployment ${status.state}: ${String(error)}`, status.state === 'in_progress' ? 'warning' : 'error');
+      return false;
     },
   );
 }
@@ -161,6 +189,16 @@ async function deploy(environment: string): Promise<number> {
     return 1;
   }
 
+  const created = await createDeployment(github, env, environment);
+  if ('error' in created) {
+    annotate('Ship', created.error);
+    await notify(env, manifest, { environment, outcome: 'failed', failures: [created.error] });
+    return 1;
+  }
+  const deployment = created.id;
+  const logUrl = runUrlOf(env);
+  await recordStatus(github, deployment, { state: 'in_progress', logUrl });
+
   const results = await deployComponents({
     manifest,
     environment,
@@ -170,6 +208,9 @@ async function deploy(environment: string): Promise<number> {
     run,
     fetch,
     sleep: (ms) => sleep(ms),
+  }).catch(async (error: unknown) => {
+    await recordStatus(github, deployment, { state: 'failure', logUrl });
+    throw error;
   });
   results.forEach((result) =>
     console.log([`${result.name}: ${result.status}`, result.url, result.detail].filter(Boolean).join(' · ')),
@@ -179,6 +220,16 @@ async function deploy(environment: string): Promise<number> {
     .filter((result) => result.status === 'failed' || result.status === 'rolled-back')
     .forEach((result) => annotate(`Ship ${result.name}`, result.detail ?? result.status));
 
+  const shipped = results.every((result) => result.status === 'deployed');
+  // GitHub's record is what the gate reads next time (requires, stale checks), so failing to write it fails the job.
+  const recorded = await recordStatus(
+    github,
+    deployment,
+    shipped
+      ? { state: 'success', logUrl, environmentUrl: results.find((result) => result.url)?.url }
+      : { state: 'failure', logUrl },
+  );
+
   await notify(env, manifest, {
     environment,
     outcome: outcomeOf(results),
@@ -186,7 +237,7 @@ async function deploy(environment: string): Promise<number> {
     comparison: await changesSince(github, previousSha, env.GITHUB_SHA),
     components: results,
   });
-  return results.every((result) => result.status === 'deployed') ? 0 : 1;
+  return shipped && recorded ? 0 : 1;
 }
 
 const COMMANDS = { gate, deploy } as const;

@@ -2,7 +2,7 @@
 #
 #   deploy:
 #     needs: test
-#     permissions: { contents: read, checks: read, deployments: read }
+#     permissions: { contents: read, checks: read, deployments: write }
 #     uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
 #     with:
 #       environment: production
@@ -10,8 +10,10 @@
 #
 # It reads ship.yaml from the calling repo, runs the gate (commit is on the default branch,
 # required checks passed, required environments already have it), then deploys each component.
-# The deploy job targets the GitHub Environment of the same name, so GitHub records a Deployment
-# and the ideaSquared bot posts its status to Discord.
+# The deploy job runs in the GitHub Environment of the same name (which must already exist in the
+# repo's settings) for its secrets and required reviewers. GitHub does not record a Deployment for
+# the job (`deployment: false`): shipper creates one itself for the commit it deploys and marks it
+# in_progress, then success or failure. That is why the calling job grants `deployments: write`.
 name: Ship
 
 on:
@@ -74,10 +76,14 @@ jobs:
     name: Deploy (${{ inputs.environment }})
     needs: gate
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment:
+      name: ${{ inputs.environment }}
+      # Use the Environment's secrets and approvals without GitHub's automatic Deployment, which
+      # would name the run's commit; shipper records the Deployment itself.
+      deployment: false
     permissions:
       contents: read
-      deployments: read
+      deployments: write
     # One deploy per repo and environment at a time. A queued one waits; it never cancels a live one
     # (that could leave D1 migrations half applied).
     concurrency:
