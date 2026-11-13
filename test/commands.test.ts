@@ -242,4 +242,23 @@ describe('deploy', () => {
     expect(client.dispatched).toEqual([]);
     expect(lines).toEqual(["⛔ Can't ship ccccccc to production:", '   • ccccccc is older than aaaaaaa, which is live on production']);
   });
+
+  it('still deploys when GitHub cannot compare the commits, and says so', async () => {
+    const client = fakeClient({
+      relation: async () => {
+        throw new Error('GitHub API returned 502');
+      },
+      compare: async () => {
+        throw new Error('GitHub API returned 502');
+      },
+    });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options({ wait: false }))).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines.slice(0, 3)).toEqual([
+      '⚠️  Could not compare ccccccc with the live aaaaaaa: GitHub API returned 502',
+      '⚠️  Could not list the commits going out: GitHub API returned 502',
+      '📦 aaaaaaa → ccccccc',
+    ]);
+  });
 });
