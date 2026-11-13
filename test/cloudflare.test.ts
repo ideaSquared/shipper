@@ -88,6 +88,14 @@ describe('pollHealth', () => {
     expect((await pollHealth('https://x.dev/h', fetchImpl, noSleep, 3, 0)).ok).toBe(true);
   });
 
+  it('treats a request that never answers as a failed attempt', async () => {
+    const hang: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    const result = await pollHealth('https://x.dev/h', hang, noSleep, 2, 0, 20);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/failed 2 times/);
+  });
+
   it('gives up after the last attempt and says why', async () => {
     const result = await pollHealth('https://x.dev/h', respond(500), noSleep, 2, 0);
     expect(result).toEqual({ ok: false, detail: 'https://x.dev/h failed 2 times, last: HTTP 500' });
@@ -156,6 +164,18 @@ components: { api: { type: cloudflare-worker, migrations: { d1: db } } }
       '--message',
       'ship: health check failed for abcdef1',
     ]);
+  });
+
+  it('rolls back when it cannot tell which URL to check', async () => {
+    const calls: { args: readonly string[] }[] = [];
+    const run: Run = async (_command, args) => {
+      calls.push({ args });
+      return { code: 0, output: args.includes('deploy') ? 'Uploaded bot\nNo URL printed' : '' };
+    };
+    const results = await deployComponents(options(SINGLE, run));
+    expect(results[0]?.status).toBe('rolled-back');
+    expect(results[0]?.detail).toMatch(/wrangler printed no URL/);
+    expect(calls.at(-1)?.args).toContain('rollback');
   });
 
   it('stops at the first failure and skips the rest', async () => {

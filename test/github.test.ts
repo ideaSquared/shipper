@@ -43,4 +43,32 @@ describe('createGitHubClient', () => {
     const github = createGitHubClient('acme/app', 'token', fetch);
     await expect(github.checkRuns('aaa')).rejects.toThrow('GitHub API /commits/aaa/check-runs?per_page=100 returned 404');
   });
+
+  it('reads every page of check runs and deployment statuses', async () => {
+    const pages: Record<string, { body: unknown; next?: string }> = {
+      '/commits/aaa/check-runs?per_page=100': {
+        body: { check_runs: [{ name: 'lint', status: 'completed', conclusion: 'success' }] },
+        next: 'https://api.github.com/repositories/1/commits/aaa/check-runs?per_page=100&page=2',
+      },
+      '/repositories/1/commits/aaa/check-runs?per_page=100&page=2': {
+        body: { check_runs: [{ name: 'test', status: 'completed', conclusion: 'success' }] },
+      },
+      '/deployments?sha=aaa&environment=staging&per_page=100': { body: [{ id: 7 }] },
+      '/deployments/7/statuses?per_page=100': {
+        body: [{ state: 'in_progress' }],
+        next: 'https://api.github.com/repositories/1/deployments/7/statuses?per_page=100&page=2',
+      },
+      '/repositories/1/deployments/7/statuses?per_page=100&page=2': { body: [{ state: 'success' }] },
+    };
+    const fetchImpl: typeof fetch = async (input) => {
+      const path = String(input).replace('https://api.github.com/repos/acme/app', '').replace('https://api.github.com', '');
+      const page = pages[path];
+      if (!page) return new Response('{}', { status: 404 });
+      const headers = page.next ? { link: `<${page.next}>; rel="next", <${page.next}>; rel="last"` } : undefined;
+      return new Response(JSON.stringify(page.body), { status: 200, headers });
+    };
+    const github = createGitHubClient('acme/app', 'token', fetchImpl);
+    expect((await github.checkRuns('aaa')).map((run) => run.name)).toEqual(['lint', 'test']);
+    expect(await github.deployedTo('aaa', ['staging'])).toEqual(['staging']);
+  });
 });

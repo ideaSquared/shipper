@@ -20,6 +20,7 @@ export type DeployOptions = {
   sleep: Sleep;
   healthAttempts?: number;
   healthIntervalMs?: number;
+  healthTimeoutMs?: number;
 };
 
 const NOT_DEPLOYED_URL = /(developers\.cloudflare\.com|github\.com|dash\.cloudflare\.com)/;
@@ -44,9 +45,12 @@ export async function pollHealth(
   sleep: Sleep,
   attempts: number,
   intervalMs: number,
+  requestTimeoutMs = 10_000,
 ): Promise<{ ok: boolean; detail: string }> {
   const attempt = async (n: number): Promise<{ ok: boolean; detail: string }> => {
-    const detail = await fetchImpl(url, { redirect: 'follow' }).then(
+    // The timeout stops a Worker that accepts the connection but never answers from holding the deploy open.
+    const request = fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(requestTimeoutMs) });
+    const detail = await request.then(
       (response) => (response.ok ? undefined : `HTTP ${response.status}`),
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );
@@ -56,6 +60,30 @@ export async function pollHealth(
     return attempt(n + 1);
   };
   return attempt(1);
+}
+
+// Any failure here, including not knowing which URL to check, rolls the new version back.
+async function checkHealth(
+  health: string,
+  deployOutput: string,
+  options: DeployOptions,
+): Promise<{ ok: boolean; detail: string }> {
+  const resolved = ((): { url: string } | { error: string } => {
+    try {
+      return { url: resolveHealthUrl(health, parseDeployedUrls(deployOutput)) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  })();
+  if ('error' in resolved) return { ok: false, detail: resolved.error };
+  return pollHealth(
+    resolved.url,
+    options.fetch,
+    options.sleep,
+    options.healthAttempts ?? 10,
+    options.healthIntervalMs ?? 6000,
+    options.healthTimeoutMs,
+  );
 }
 
 async function deployOne(name: string, component: Component, options: DeployOptions): Promise<ComponentResult> {
@@ -82,14 +110,7 @@ async function deployOne(name: string, component: Component, options: DeployOpti
 
   if (!component.health) return { name, status: 'deployed', url };
 
-  const healthUrl = resolveHealthUrl(component.health, parseDeployedUrls(deploy.output));
-  const health = await pollHealth(
-    healthUrl,
-    options.fetch,
-    options.sleep,
-    options.healthAttempts ?? 10,
-    options.healthIntervalMs ?? 6000,
-  );
+  const health = await checkHealth(component.health, deploy.output, options);
   if (health.ok) return { name, status: 'deployed', url };
 
   const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';
