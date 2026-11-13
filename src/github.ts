@@ -1,13 +1,32 @@
 import { z } from 'zod';
 import type { CheckRun } from './gate.ts';
+import type { Comparison } from './notify.ts';
 
 export type GitHubClient = {
   isOnBranch(sha: string, branch: string): Promise<boolean>;
   checkRuns(sha: string): Promise<CheckRun[]>;
   deployedTo(sha: string, environments: readonly string[]): Promise<string[]>;
+  // SHA of the newest deployment to the environment that reached success, if any.
+  lastSuccessfulDeployment(environment: string): Promise<string | undefined>;
+  compare(base: string, head: string): Promise<Comparison>;
 };
 
-const CompareSchema = z.object({ status: z.string() });
+const CompareSchema = z.object({
+  status: z.string(),
+  total_commits: z.number().default(0),
+  html_url: z.string().default(''),
+  commits: z
+    .array(
+      z.object({
+        sha: z.string(),
+        html_url: z.string(),
+        commit: z.object({ message: z.string(), author: z.object({ name: z.string() }).nullable() }),
+        author: z.object({ login: z.string() }).nullable(),
+      }),
+    )
+    .default([]),
+});
+const DeploymentShasSchema = z.array(z.object({ id: z.number(), sha: z.string() }));
 const CheckRunsSchema = z.object({
   check_runs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
 });
@@ -65,6 +84,30 @@ export function createGitHubClient(repository: string, token: string, fetchImpl:
     async checkRuns(sha) {
       // GitHub's default filter returns the latest run of each check, so a passing re-run replaces a failure.
       return getAll(`/commits/${sha}/check-runs?per_page=100`, CheckRunsSchema, (page) => page.check_runs);
+    },
+    async lastSuccessfulDeployment(environment) {
+      const query = new URLSearchParams({ environment, per_page: '20' });
+      const deployments = await get(`/deployments?${query}`, DeploymentShasSchema);
+      // Newest first; stop at the first one that succeeded.
+      return deployments.reduce<Promise<string | undefined>>(async (found, deployment) => {
+        const sha = await found;
+        if (sha) return sha;
+        const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
+        return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
+      }, Promise.resolve(undefined));
+    },
+    async compare(base, head) {
+      const result = await get(`/compare/${base}...${head}`, CompareSchema);
+      return {
+        totalCommits: result.total_commits,
+        url: result.html_url,
+        commits: result.commits.map((commit) => ({
+          sha: commit.sha,
+          message: commit.commit.message.split('\n')[0] ?? '',
+          author: commit.author?.login ?? commit.commit.author?.name ?? 'unknown',
+          url: commit.html_url,
+        })),
+      };
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

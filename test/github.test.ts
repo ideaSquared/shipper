@@ -71,4 +71,46 @@ describe('createGitHubClient', () => {
     expect((await github.checkRuns('aaa')).map((run) => run.name)).toEqual(['lint', 'test']);
     expect(await github.deployedTo('aaa', ['staging'])).toEqual(['staging']);
   });
+
+  it('finds the newest deployment that succeeded, skipping one still running', async () => {
+    const { fetch } = fakeFetch({
+      '/deployments?environment=production&per_page=20': [
+        { id: 3, sha: 'ccc' },
+        { id: 2, sha: 'bbb' },
+        { id: 1, sha: 'aaa' },
+      ],
+      '/deployments/3/statuses?per_page=100': [{ state: 'in_progress' }],
+      '/deployments/2/statuses?per_page=100': [{ state: 'inactive' }, { state: 'success' }],
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.lastSuccessfulDeployment('production')).toBe('bbb');
+  });
+
+  it('returns nothing for an environment never deployed', async () => {
+    const { fetch } = fakeFetch({ '/deployments?environment=production&per_page=20': [] });
+    expect(await createGitHubClient('acme/app', 'token', fetch).lastSuccessfulDeployment('production')).toBeUndefined();
+  });
+
+  it('summarises the commits between two SHAs', async () => {
+    const { fetch } = fakeFetch({
+      '/compare/aaa...bbb': {
+        status: 'ahead',
+        total_commits: 1,
+        html_url: 'https://github.com/acme/app/compare/aaa...bbb',
+        commits: [
+          {
+            sha: 'bbb',
+            html_url: 'https://github.com/acme/app/commit/bbb',
+            commit: { message: 'fix: thing (#3)\n\nlong body', author: { name: 'Octo Cat' } },
+            author: null,
+          },
+        ],
+      },
+    });
+    expect(await createGitHubClient('acme/app', 'token', fetch).compare('aaa', 'bbb')).toEqual({
+      totalCommits: 1,
+      url: 'https://github.com/acme/app/compare/aaa...bbb',
+      commits: [{ sha: 'bbb', message: 'fix: thing (#3)', author: 'Octo Cat', url: 'https://github.com/acme/app/commit/bbb' }],
+    });
+  });
 });
