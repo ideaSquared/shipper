@@ -59,6 +59,20 @@ components:
 `;
 
 describe('parseDeployedUrls', () => {
+  it('ignores URLs in the bindings table that wrangler prints before the deploy URL', () => {
+    const output = `Your Worker has access to the following bindings:
+Binding                                         Resource
+env.DISCORD_INVITE ("https://discord.gg/abc123")  Environment Variable
+env.STATS_URL ("https://example.com/api/stats")   Environment Variable
+
+Uploaded wardogs-discord-bot (2.53 sec)
+Deployed wardogs-discord-bot triggers (0.77 sec)
+  https://wardogs-discord-bot.idea-squared.workers.dev
+  schedule: * * * * *
+Current Version ID: 00d2fe82-e759-4e2e-962f-88c31d47903f`;
+    expect(parseDeployedUrls(output)).toEqual(['https://wardogs-discord-bot.idea-squared.workers.dev']);
+  });
+
   it('finds the Worker URL and ignores Cloudflare doc links', () => {
     const output = `${WRANGLER_OUTPUT}See https://developers.cloudflare.com/workers/ for more.`;
     expect(parseDeployedUrls(output)).toEqual(['https://wardogs-discord-bot.example.workers.dev']);
