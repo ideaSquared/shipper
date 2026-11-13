@@ -9,7 +9,21 @@ export type GitHubClient = {
   // SHA of the newest deployment to the environment that reached success, if any.
   lastSuccessfulDeployment(environment: string): Promise<string | undefined>;
   compare(base: string, head: string): Promise<Comparison>;
+  defaultBranch(): Promise<string>;
+  headSha(branch: string): Promise<string>;
+  readFile(path: string, ref: string): Promise<string | undefined>;
+  // Newest first, each with its latest status.
+  deployments(environment: string, limit: number): Promise<DeploymentSummary[]>;
+  dispatchWorkflow(workflow: string, ref: string, inputs: Record<string, string>): Promise<void>;
+  // The newest workflow_dispatch run of the workflow created at or after `since`, if it exists yet.
+  findDispatchedRun(workflow: string, since: Date): Promise<RunSummary | undefined>;
+  run(id: number): Promise<RunSummary>;
+  jobs(runId: number): Promise<JobSummary[]>;
 };
+
+export type DeploymentSummary = { sha: string; createdAt: string; creator: string; state: string };
+export type RunSummary = { id: number; status: string; conclusion: string | null; url: string; createdAt: string };
+export type JobSummary = { name: string; status: string; conclusion: string | null };
 
 const CompareSchema = z.object({
   status: z.string(),
@@ -33,18 +47,55 @@ const CheckRunsSchema = z.object({
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
 
+const RepoSchema = z.object({ default_branch: z.string() });
+const CommitSchema = z.object({ sha: z.string() });
+const ContentSchema = z.object({ content: z.string(), encoding: z.string() });
+const DeploymentListSchema = z.array(
+  z.object({ id: z.number(), sha: z.string(), created_at: z.string(), creator: z.object({ login: z.string() }).nullable() }),
+);
+const RunSchema = z.object({
+  id: z.number(),
+  status: z.string(),
+  conclusion: z.string().nullable(),
+  html_url: z.string(),
+  created_at: z.string(),
+});
+const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
+const JobsSchema = z.object({
+  jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
+});
+
+const toRun = (run: z.infer<typeof RunSchema>): RunSummary => ({
+  id: run.id,
+  status: run.status,
+  conclusion: run.conclusion,
+  url: run.html_url,
+  createdAt: run.created_at,
+});
+
 const BASE = 'https://api.github.com';
 
-export function createGitHubClient(repository: string, token: string, fetchImpl: typeof fetch = fetch): GitHubClient {
-  async function request(url: string): Promise<Response> {
+// Without a token, only public repositories can be read, and nothing can be dispatched.
+export function createGitHubClient(repository: string, token: string | undefined, fetchImpl: typeof fetch = fetch): GitHubClient {
+  async function request(url: string, init: { method?: string; body?: string } = {}): Promise<Response> {
     const response = await fetchImpl(url, {
+      ...init,
       headers: {
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         accept: 'application/vnd.github+json',
         'x-github-api-version': '2022-11-28',
+        // GitHub refuses API requests without a User-Agent.
+        'user-agent': 'ideasquared-ship',
+        ...(init.body ? { 'content-type': 'application/json' } : {}),
       },
     });
-    if (!response.ok) throw new Error(`GitHub API ${url.replace(`${BASE}/repos/${repository}`, '')} returned ${response.status}`);
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body: unknown) => (typeof body === 'object' && body && 'message' in body ? `: ${String(body.message)}` : ''))
+        .catch(() => '');
+      throw new Error(`GitHub API ${url.replace(`${BASE}/repos/${repository}`, '') || '/'} returned ${response.status}${detail}`);
+    }
     return response;
   }
 
@@ -127,6 +178,62 @@ export function createGitHubClient(repository: string, token: string, fetchImpl:
           url: commit.html_url,
         })),
       };
+    },
+    async defaultBranch() {
+      return (await get('', RepoSchema)).default_branch;
+    },
+    async headSha(branch) {
+      return (await get(`/commits/${encodeURIComponent(branch)}`, CommitSchema)).sha;
+    },
+    async readFile(path, ref) {
+      const response = await fetchImpl(`${BASE}/repos/${repository}/contents/${path}?ref=${encodeURIComponent(ref)}`, {
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          accept: 'application/vnd.github+json',
+          'x-github-api-version': '2022-11-28',
+        // GitHub refuses API requests without a User-Agent.
+        'user-agent': 'ideasquared-ship',
+        },
+      });
+      if (response.status === 404) return undefined;
+      if (!response.ok) throw new Error(`GitHub API /contents/${path} returned ${response.status}`);
+      const file = ContentSchema.parse(await response.json());
+      return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8');
+    },
+    async deployments(environment, limit) {
+      const query = new URLSearchParams({ environment, per_page: String(limit) });
+      const list = await get(`/deployments?${query}`, DeploymentListSchema);
+      return Promise.all(
+        list.map(async (deployment) => {
+          const [latest] = await get(`/deployments/${deployment.id}/statuses?per_page=1`, StatusesSchema);
+          return {
+            sha: deployment.sha,
+            createdAt: deployment.created_at,
+            creator: deployment.creator?.login ?? 'unknown',
+            state: latest?.state ?? 'pending',
+          };
+        }),
+      );
+    },
+    async dispatchWorkflow(workflow, ref, inputs) {
+      await request(`${BASE}/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+        method: 'POST',
+        body: JSON.stringify({ ref, inputs }),
+      });
+    },
+    async findDispatchedRun(workflow, since) {
+      const query = new URLSearchParams({ event: 'workflow_dispatch', per_page: '10' });
+      const { workflow_runs } = await get(`/actions/workflows/${encodeURIComponent(workflow)}/runs?${query}`, RunsSchema);
+      // Allow for clock skew between this machine and GitHub.
+      const after = since.getTime() - 30_000;
+      const run = workflow_runs.find((candidate) => Date.parse(candidate.created_at) >= after);
+      return run ? toRun(run) : undefined;
+    },
+    async run(id) {
+      return toRun(await get(`/actions/runs/${id}`, RunSchema));
+    },
+    async jobs(runId) {
+      return getAll(`/actions/runs/${runId}/jobs?per_page=100`, JobsSchema, (page) => page.jobs);
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

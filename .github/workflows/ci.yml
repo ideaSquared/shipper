@@ -21,3 +21,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      # dist/ is committed so `pnpm add -g github:ideaSquared/shipper` works without a build step.
+      - name: dist/ matches src/
+        run: |
+          pnpm build
+          git diff --exit-code -- dist || { echo "::error::dist/ is out of date. Run pnpm build and commit it."; exit 1; }

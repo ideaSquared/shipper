@@ -33,6 +33,14 @@ export const ManifestSchema = z
     environments: z.record(z.string().regex(NAME), EnvironmentSchema),
     // Check runs that must have succeeded on the SHA before it deploys.
     checks: z.array(z.string().min(1)).default([]),
+    // How `ship deploy` starts a deploy: a workflow with a workflow_dispatch trigger that calls shipper.
+    dispatch: z
+      .strictObject({
+        workflow: z.string().min(1),
+        // Name of the workflow's input that takes the environment. Omit if the workflow has a single target.
+        environmentInput: z.string().min(1).optional(),
+      })
+      .optional(),
     // Deployed in the order written; a failure stops the rest.
     components: z.record(z.string().regex(NAME), CloudflareWorkerSchema),
   })
