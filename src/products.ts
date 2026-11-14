@@ -2,6 +2,7 @@
 // Add a line when a repo starts using ship.yaml.
 export const PRODUCTS: Readonly<Record<string, string>> = {
   ads: 'ideaSquared/adopt-dont-shop',
+  'agent-idea': 'ideaSquared/agent-idea',
   creatrgrid: 'ideaSquared/creatrgrid',
   gaminginit: 'ideaSquared/gaminginit',
   'gaminginit-bot': 'ideaSquared/gaminginit-bot',

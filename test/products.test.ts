@@ -17,6 +17,10 @@ describe('resolveRepo', () => {
     expect(resolveRepo({ remote: 'https://github.com/x/y.git' })).toBe('x/y');
   });
 
+  it('knows agent-idea', () => {
+    expect(resolveRepo({ product: 'agent-idea' })).toBe('ideaSquared/agent-idea');
+  });
+
   it('explains what to do when it cannot tell', () => {
     expect(() => resolveRepo({ product: 'nope' })).toThrow("Unknown product 'nope'");
     expect(() => resolveRepo({})).toThrow('Which product?');
