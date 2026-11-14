@@ -96,6 +96,8 @@ export async function sendReport(
     const text = await response.text().catch(() => '');
     return { ok: false, detail: `bot answered HTTP ${response.status}: ${text.slice(0, 200)}` };
   } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    // fetch puts the URL in some errors (e.g. "Failed to parse URL from ..."), and it is a secret.
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, detail: message.replaceAll(url, '[webhook url]') };
   }
 }
