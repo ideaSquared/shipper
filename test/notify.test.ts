@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { buildReport, outcomeOf, sendReport, signBody, type ReportInput } from '../src/notify.ts';
+import { buildReport, outcomeOf, sendReport, shipActor, signBody, type ReportInput } from '../src/notify.ts';
 
 const SHA = 'bbbbbbb1234567890bbbbbbb1234567890bbbbbb';
 const PREV = 'aaaaaaa1234567890aaaaaaa1234567890aaaaaa';
@@ -108,5 +108,16 @@ describe('sendReport', () => {
       ok: false,
       detail: 'bot answered HTTP 502: ',
     });
+  });
+});
+
+describe('shipActor', () => {
+  it('names GitHub Actions for an automatic deploy on push', () => {
+    expect(shipActor('push', 'someone')).toBe('GitHub Actions');
+  });
+
+  it('names the person for a deploy or rollback they started', () => {
+    expect(shipActor('workflow_dispatch', 'someone')).toBe('someone');
+    expect(shipActor(undefined, 'someone')).toBe('someone');
   });
 });

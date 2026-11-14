@@ -44,7 +44,8 @@ ship rollback gaminginit-bot production    # put back the commit that was live b
   skips only the yes/no, never the typed name, so production can't be shipped by accident or
   from a script.
 - Nothing builds on your machine: the deploy runs in GitHub Actions, so the Discord message names
-  you as the person who shipped.
+  you as the person who shipped. An automatic deploy, run because something was merged to the
+  default branch, is credited to GitHub Actions instead.
 - Output uses colour and emojis. Colour turns off when the output is piped or `NO_COLOR` is set.
   Emojis need a modern terminal (Windows Terminal, VS Code, macOS, Linux); the old built-in
   Windows `cmd` window shows them as boxes.
