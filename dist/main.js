@@ -8,7 +8,7 @@ import { deployComponents, renderSummary } from "./cloudflare.js";
 import { evaluateGate, liveFailure } from "./gate.js";
 import { createGitHubClient, GitHubApiError } from "./github.js";
 import { environmentOf, parseManifest } from "./manifest.js";
-import { buildReport, outcomeOf, sendReport } from "./notify.js";
+import { buildReport, outcomeOf, sendReport, shipActor } from "./notify.js";
 const EnvSchema = z.object({
     SHIP_REPO_ROOT: z.string().min(1),
     GITHUB_REPOSITORY: z.string().min(1),
@@ -20,6 +20,8 @@ const EnvSchema = z.object({
         .default('false')
         .transform((value) => value === 'true'),
     GITHUB_ACTOR: z.string().default('unknown'),
+    // The event that started the caller's workflow: `push` for an automatic deploy, `workflow_dispatch` for `ship`.
+    GITHUB_EVENT_NAME: z.string().optional(),
     GITHUB_STEP_SUMMARY: z.string().optional(),
     GITHUB_SERVER_URL: z.string().default('https://github.com'),
     GITHUB_RUN_ID: z.string().default(''),
@@ -45,6 +47,7 @@ function annotate(title, message, level = 'error') {
     const encode = (text) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
     console.log(`::${level} title=${encode(title)}::${encode(message)}`);
 }
+const actorOf = (env) => shipActor(env.GITHUB_EVENT_NAME, env.GITHUB_ACTOR);
 const runUrlOf = (env) => `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 // Sends the deploy message to Discord through the ideaSquared bot. Only ever warns.
 async function notify(env, manifest, input) {
@@ -61,7 +64,7 @@ async function notify(env, manifest, input) {
         project: manifest.discord,
         product: manifest.product,
         repository: env.GITHUB_REPOSITORY,
-        actor: env.GITHUB_ACTOR,
+        actor: actorOf(env),
         at: new Date(),
         sha: env.SHIP_SHA,
         runUrl: runUrlOf(env),
@@ -104,7 +107,7 @@ async function liveFacts(github, environment, sha, live) {
 // commit really deployed rather than the run's own commit.
 async function createDeployment(github, env, environment) {
     return github
-        .createDeployment({ sha: env.SHIP_SHA, environment, actor: env.GITHUB_ACTOR, production: environment === 'production' })
+        .createDeployment({ sha: env.SHIP_SHA, environment, actor: actorOf(env), production: environment === 'production' })
         .then((id) => ({ id }))
         .catch((error) => {
         const reason = error instanceof Error ? error.message : String(error);
@@ -194,7 +197,7 @@ async function deploy(environment) {
         manifest,
         environment,
         sha: env.SHIP_SHA,
-        actor: env.GITHUB_ACTOR,
+        actor: actorOf(env),
         repoRoot: env.SHIP_REPO_ROOT,
         run,
         fetch,

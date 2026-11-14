@@ -101,3 +101,8 @@ export async function sendReport(
     return { ok: false, detail: message.replaceAll(url, '[webhook url]') };
   }
 }
+
+// Who a deploy is credited to. A deploy that runs because something was merged to the default branch is
+// automatic, so it is credited to GitHub Actions; `ship deploy` and `ship rollback` name the person who ran them.
+export const shipActor = (eventName: string | undefined, actor: string): string =>
+  eventName === 'push' ? 'GitHub Actions' : actor;
