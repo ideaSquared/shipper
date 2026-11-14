@@ -94,6 +94,12 @@ describe('sendReport', () => {
       throw new Error('getaddrinfo ENOTFOUND');
     };
     expect((await sendReport('https://bot.dev/ship', 's', buildReport(input), down)).detail).toBe('getaddrinfo ENOTFOUND');
+    const echoesUrl: typeof fetch = async (target) => {
+      throw new TypeError(`Failed to parse URL from ${String(target)}`);
+    };
+    expect((await sendReport('not-a-url?key=hunter2', 's', buildReport(input), echoesUrl)).detail).toBe(
+      'Failed to parse URL from [webhook url]',
+    );
     const brokenBody: typeof fetch = async () => {
       const body = new ReadableStream({ start: (controller) => controller.error(new Error('connection reset')) });
       return new Response(body, { status: 502 });
