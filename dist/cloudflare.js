@@ -17,25 +17,46 @@ export function resolveHealthUrl(health, deployedUrls) {
         throw new Error(`health is a path (${health}) but wrangler printed no URL to put it on; use a full URL`);
     return new URL(health, base).toString();
 }
-export async function pollHealth(url, fetchImpl, sleep, attempts, intervalMs, requestTimeoutMs = 10_000) {
-    const attempt = async (n) => {
+const EXCERPT_LENGTH = 120;
+function excerpt(body) {
+    const flat = body.replace(/\s+/g, ' ').trim();
+    return JSON.stringify(flat.length > EXCERPT_LENGTH ? `${flat.slice(0, EXCERPT_LENGTH)}…` : flat);
+}
+// `match` also requires the body to contain `expect`; `label` (the environment) names the check in that message.
+export async function pollHealth(url, fetchImpl, sleep, attempts, intervalMs, requestTimeoutMs = 10_000, match) {
+    const check = async () => {
         // The timeout stops a Worker that accepts the connection but never answers from holding the deploy open.
-        const request = fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(requestTimeoutMs) });
-        const detail = await request.then((response) => (response.ok ? undefined : `HTTP ${response.status}`), (error) => (error instanceof Error ? error.message : String(error)));
-        if (detail === undefined)
+        const response = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(requestTimeoutMs) });
+        if (!response.ok)
+            return { failure: `HTTP ${response.status}` };
+        if (!match)
+            return {};
+        const body = await response.text();
+        if (body.includes(match.expect))
+            return {};
+        return {
+            mismatch: `health check for ${match.label} returned ${response.status} but body did not contain ${JSON.stringify(match.expect)}; body was ${excerpt(body)}`,
+        };
+    };
+    const attempt = async (n) => {
+        const result = await check().catch((error) => ({ failure: error instanceof Error ? error.message : String(error) }));
+        if (!result.failure && !result.mismatch)
             return { ok: true, detail: `${url} answered` };
-        if (n >= attempts)
-            return { ok: false, detail: `${url} failed ${attempts} times, last: ${detail}` };
+        if (n >= attempts) {
+            return result.mismatch
+                ? { ok: false, detail: `${result.mismatch} (${url}, ${attempts} attempts)` }
+                : { ok: false, detail: `${url} failed ${attempts} times, last: ${result.failure}` };
+        }
         await sleep(intervalMs);
         return attempt(n + 1);
     };
     return attempt(1);
 }
 // Any failure here, including not knowing which URL to check, rolls the new version back.
-async function checkHealth(health, deployOutput, options) {
+async function checkHealth(health, environment, deployOutput, options) {
     const resolved = (() => {
         try {
-            return { url: resolveHealthUrl(health, parseDeployedUrls(deployOutput)) };
+            return { url: resolveHealthUrl(health.url, parseDeployedUrls(deployOutput)) };
         }
         catch (error) {
             return { error: error instanceof Error ? error.message : String(error) };
@@ -43,7 +64,7 @@ async function checkHealth(health, deployOutput, options) {
     })();
     if ('error' in resolved)
         return { ok: false, detail: resolved.error };
-    return pollHealth(resolved.url, options.fetch, options.sleep, options.healthAttempts ?? 10, options.healthIntervalMs ?? 6000, options.healthTimeoutMs);
+    return pollHealth(resolved.url, options.fetch, options.sleep, options.healthAttempts ?? 10, options.healthIntervalMs ?? 6000, options.healthTimeoutMs, health.expect ? { expect: health.expect, label: environment } : undefined);
 }
 async function deployOne(name, component, options) {
     const { run, repoRoot, sha, actor } = options;
@@ -69,10 +90,10 @@ async function deployOne(name, component, options) {
     const url = parseDeployedUrls(deploy.output)[0];
     if (!component.health)
         return { name, status: 'deployed', url };
-    const healthPath = healthFor(component, options.environment);
-    if (!healthPath)
+    const healthCheck = healthFor(component, options.environment);
+    if (!healthCheck)
         return { name, status: 'deployed', url, detail: `no health check for ${options.environment}` };
-    const health = await checkHealth(healthPath, deploy.output, options);
+    const health = await checkHealth(healthCheck, options.environment, deploy.output, options);
     if (health.ok)
         return { name, status: 'deployed', url, detail: `health check passed: ${health.detail}` };
     const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';

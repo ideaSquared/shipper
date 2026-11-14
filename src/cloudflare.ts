@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { CloudflareWorker, Manifest } from './manifest.ts';
+import type { CloudflareWorker, HealthCheck, Manifest } from './manifest.ts';
 import { environmentOf, healthFor } from './manifest.ts';
 
 export type RunResult = { code: number; output: string };
@@ -41,6 +41,16 @@ export function resolveHealthUrl(health: string, deployedUrls: readonly string[]
   return new URL(health, base).toString();
 }
 
+const EXCERPT_LENGTH = 120;
+
+function excerpt(body: string): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return JSON.stringify(flat.length > EXCERPT_LENGTH ? `${flat.slice(0, EXCERPT_LENGTH)}…` : flat);
+}
+
+type Attempt = { failure?: string; mismatch?: string };
+
+// `match` also requires the body to contain `expect`; `label` (the environment) names the check in that message.
 export async function pollHealth(
   url: string,
   fetchImpl: typeof fetch,
@@ -48,16 +58,27 @@ export async function pollHealth(
   attempts: number,
   intervalMs: number,
   requestTimeoutMs = 10_000,
+  match?: { expect: string; label: string },
 ): Promise<{ ok: boolean; detail: string }> {
-  const attempt = async (n: number): Promise<{ ok: boolean; detail: string }> => {
+  const check = async (): Promise<Attempt> => {
     // The timeout stops a Worker that accepts the connection but never answers from holding the deploy open.
-    const request = fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(requestTimeoutMs) });
-    const detail = await request.then(
-      (response) => (response.ok ? undefined : `HTTP ${response.status}`),
-      (error: unknown) => (error instanceof Error ? error.message : String(error)),
-    );
-    if (detail === undefined) return { ok: true, detail: `${url} answered` };
-    if (n >= attempts) return { ok: false, detail: `${url} failed ${attempts} times, last: ${detail}` };
+    const response = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(requestTimeoutMs) });
+    if (!response.ok) return { failure: `HTTP ${response.status}` };
+    if (!match) return {};
+    const body = await response.text();
+    if (body.includes(match.expect)) return {};
+    return {
+      mismatch: `health check for ${match.label} returned ${response.status} but body did not contain ${JSON.stringify(match.expect)}; body was ${excerpt(body)}`,
+    };
+  };
+  const attempt = async (n: number): Promise<{ ok: boolean; detail: string }> => {
+    const result = await check().catch((error: unknown): Attempt => ({ failure: error instanceof Error ? error.message : String(error) }));
+    if (!result.failure && !result.mismatch) return { ok: true, detail: `${url} answered` };
+    if (n >= attempts) {
+      return result.mismatch
+        ? { ok: false, detail: `${result.mismatch} (${url}, ${attempts} attempts)` }
+        : { ok: false, detail: `${url} failed ${attempts} times, last: ${result.failure}` };
+    }
     await sleep(intervalMs);
     return attempt(n + 1);
   };
@@ -66,13 +87,14 @@ export async function pollHealth(
 
 // Any failure here, including not knowing which URL to check, rolls the new version back.
 async function checkHealth(
-  health: string,
+  health: HealthCheck,
+  environment: string,
   deployOutput: string,
   options: DeployOptions,
 ): Promise<{ ok: boolean; detail: string }> {
   const resolved = ((): { url: string } | { error: string } => {
     try {
-      return { url: resolveHealthUrl(health, parseDeployedUrls(deployOutput)) };
+      return { url: resolveHealthUrl(health.url, parseDeployedUrls(deployOutput)) };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
@@ -85,6 +107,7 @@ async function checkHealth(
     options.healthAttempts ?? 10,
     options.healthIntervalMs ?? 6000,
     options.healthTimeoutMs,
+    health.expect ? { expect: health.expect, label: environment } : undefined,
   );
 }
 
@@ -112,10 +135,10 @@ async function deployOne(name: string, component: CloudflareWorker, options: Dep
   const url = parseDeployedUrls(deploy.output)[0];
 
   if (!component.health) return { name, status: 'deployed', url };
-  const healthPath = healthFor(component, options.environment);
-  if (!healthPath) return { name, status: 'deployed', url, detail: `no health check for ${options.environment}` };
+  const healthCheck = healthFor(component, options.environment);
+  if (!healthCheck) return { name, status: 'deployed', url, detail: `no health check for ${options.environment}` };
 
-  const health = await checkHealth(healthPath, deploy.output, options);
+  const health = await checkHealth(healthCheck, options.environment, deploy.output, options);
   if (health.ok) return { name, status: 'deployed', url, detail: `health check passed: ${health.detail}` };
 
   const schemaNote = component.migrations ? ' D1 migrations are forward-only and were not undone.' : '';
