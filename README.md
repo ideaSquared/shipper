@@ -299,14 +299,11 @@ jobs:
 ## Versions
 
 Product repos use the `v1` tag, and the workflow checks out its own scripts at `v1` too
-(`shipper-ref`). To release a compatible change, merge to `main` and move the tag:
+(`shipper-ref`). Merging a compatible change to `main` releases it: once CI is green on `main`, the
+`release-v1` job moves `v1` to that commit, so every product's next deploy uses it.
 
-```bash
-git tag -f v1 origin/main
-git push -f origin v1
-```
-
-A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag.
+A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag instead. Mark it in the commit
+(`feat!: …` or a `BREAKING CHANGE:` footer) and `release-v1` leaves `v1` where it is; create `v2` by hand.
 
 ## Development
 
