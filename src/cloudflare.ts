@@ -72,8 +72,8 @@ export async function pollHealth(
     };
   };
   const attempt = async (n: number): Promise<{ ok: boolean; detail: string }> => {
-    const result = await check().catch((error: unknown): Attempt => ({ failure: error instanceof Error ? error.message : String(error) }));
-    if (!result.failure && !result.mismatch) return { ok: true, detail: `${url} answered` };
+    const result = await check().catch((error: unknown): Attempt => ({ failure: (error instanceof Error ? error.message : String(error)) || 'request failed' }));
+    if (result.failure === undefined && result.mismatch === undefined) return { ok: true, detail: `${url} answered` };
     if (n >= attempts) {
       return result.mismatch
         ? { ok: false, detail: `${result.mismatch} (${url}, ${attempts} attempts)` }

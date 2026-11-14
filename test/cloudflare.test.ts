@@ -234,6 +234,32 @@ components:
     expect((await deployComponents(options(manifest, fakeRun().run, healthy)))[0]?.status).toBe('deployed');
   });
 
+  it('treats a request that rejects with an empty message as a failure and rolls back', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: https://api.example.com/health } }
+`;
+    const { run, calls } = fakeRun();
+    const blank: typeof fetch = async () => {
+      throw new Error('');
+    };
+    const results = await deployComponents(options(manifest, run, blank));
+    expect(results[0]?.status).toBe('rolled-back');
+    expect(results[0]?.detail).toContain('request failed');
+    expect(calls.some((call) => call.args.includes('rollback'))).toBe(true);
+  });
+
+  it('skips the check for an environment whose health is an empty string', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: { production: "" } } }
+`;
+    const results = await deployComponents(options(manifest, fakeRun().run, respond(500)));
+    expect(results[0]?.status).toBe('deployed');
+  });
+
   it('does not deploy when migrations fail', async () => {
     const { run, calls } = fakeRun((call) => call.args.includes('migrations'));
     const results = await deployComponents(

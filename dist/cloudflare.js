@@ -39,8 +39,8 @@ export async function pollHealth(url, fetchImpl, sleep, attempts, intervalMs, re
         };
     };
     const attempt = async (n) => {
-        const result = await check().catch((error) => ({ failure: error instanceof Error ? error.message : String(error) }));
-        if (!result.failure && !result.mismatch)
+        const result = await check().catch((error) => ({ failure: (error instanceof Error ? error.message : String(error)) || 'request failed' }));
+        if (result.failure === undefined && result.mismatch === undefined)
             return { ok: true, detail: `${url} answered` };
         if (n >= attempts) {
             return result.mismatch

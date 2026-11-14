@@ -96,5 +96,7 @@ export function environmentOf(manifest, name) {
 // The component's health check for one environment, if it has one there.
 export function healthFor(component, environment) {
     const health = typeof component.health === 'object' ? component.health[environment] : component.health;
-    return typeof health === 'string' ? { url: health } : health;
+    if (typeof health === 'string')
+        return health === '' ? undefined : { url: health };
+    return health;
 }
