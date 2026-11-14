@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentOf, parseManifest } from '../src/manifest.ts';
+import { environmentOf, healthFor, parseManifest } from '../src/manifest.ts';
 
 const VALID = `
 product: creatrgrid
@@ -73,6 +73,35 @@ environments: { production: {} }
 components: { api: { type: cloudflare-worker, health: { prod: /health } } }
 `),
     ).toThrow(/components\.api\.health\.prod: unknown environment 'prod'/);
+  });
+
+  it('takes a health check as a plain string or as { url, expect }, per environment', () => {
+    const manifest = parseManifest(`
+product: x
+environments: { staging: {}, production: {} }
+components:
+  api:
+    type: cloudflare-worker
+    health:
+      staging: { url: /health, expect: '"status":"ok"' }
+      production: https://x.dev/health
+  web: { type: cloudflare-worker, health: /up }
+`);
+    const { api, web } = manifest.components;
+    if (api?.type !== 'cloudflare-worker' || web?.type !== 'cloudflare-worker') throw new Error('expected workers');
+    expect(healthFor(api, 'staging')).toEqual({ url: '/health', expect: '"status":"ok"' });
+    expect(healthFor(api, 'production')).toEqual({ url: 'https://x.dev/health' });
+    expect(healthFor(web, 'staging')).toEqual({ url: '/up' });
+  });
+
+  it('rejects an empty expect and unknown keys in a health check', () => {
+    const manifest = (check: string) => `
+product: x
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: { production: ${check} } } }
+`;
+    expect(() => parseManifest(manifest('{ url: /h, expect: "" }'))).toThrow(/ship.yaml is invalid/);
+    expect(() => parseManifest(manifest('{ url: /h, expects: ok }'))).toThrow(/ship.yaml is invalid/);
   });
 
   it('rejects a manifest with no components', () => {

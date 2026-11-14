@@ -116,6 +116,30 @@ describe('pollHealth', () => {
   });
 });
 
+describe('pollHealth with expect', () => {
+  const body = (text: string): typeof fetch => async () => new Response(text, { status: 200 });
+  const match = { expect: '"status":"ok"', label: 'staging' };
+
+  it('passes when the body contains the text', async () => {
+    const result = await pollHealth('https://x.dev/h', body('{"status":"ok","v":1}'), noSleep, 2, 0, 1000, match);
+    expect(result).toEqual({ ok: true, detail: 'https://x.dev/h answered' });
+  });
+
+  it('fails when a 200 body does not contain the text, naming the environment and a short excerpt', async () => {
+    const result = await pollHealth('https://x.dev/h', body(`<html>Maintenance ${'z'.repeat(500)}</html>`), noSleep, 2, 0, 1000, match);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(
+      /^health check for staging returned 200 but body did not contain "\\"status\\":\\"ok\\"\"; body was "<html>Maintenance z+….*" \(https:\/\/x\.dev\/h, 2 attempts\)$/,
+    );
+    expect(result.detail.length).toBeLessThan(300);
+  });
+
+  it('still fails on a bad status before looking at the body', async () => {
+    const result = await pollHealth('https://x.dev/h', respond(503), noSleep, 2, 0, 1000, match);
+    expect(result.detail).toBe('https://x.dev/h failed 2 times, last: HTTP 503');
+  });
+});
+
 describe('deployComponents', () => {
   it('deploys with a message naming the commit and who shipped it', async () => {
     const { run, calls } = fakeRun();
@@ -191,6 +215,49 @@ components:
       detail: 'no health check for staging',
     });
     expect(checked).toEqual(['https://api.example.com/health']);
+  });
+
+  it('rolls back when the health URL answers 200 without the expected text', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { staging: {}, production: {} }
+components:
+  api: { type: cloudflare-worker, health: { production: { url: https://api.example.com/health, expect: ok } } }
+`;
+    const { run, calls } = fakeRun();
+    const wrongApp: typeof fetch = async () => new Response('welcome to nginx', { status: 200 });
+    const results = await deployComponents(options(manifest, run, wrongApp));
+    expect(results[0]?.status).toBe('rolled-back');
+    expect(results[0]?.detail).toContain('health check for production returned 200 but body did not contain "ok"');
+    expect(calls.some((call) => call.args.includes('rollback'))).toBe(true);
+    const healthy: typeof fetch = async () => new Response('all ok', { status: 200 });
+    expect((await deployComponents(options(manifest, fakeRun().run, healthy)))[0]?.status).toBe('deployed');
+  });
+
+  it('treats a request that rejects with an empty message as a failure and rolls back', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: https://api.example.com/health } }
+`;
+    const { run, calls } = fakeRun();
+    const blank: typeof fetch = async () => {
+      throw new Error('');
+    };
+    const results = await deployComponents(options(manifest, run, blank));
+    expect(results[0]?.status).toBe('rolled-back');
+    expect(results[0]?.detail).toContain('request failed');
+    expect(calls.some((call) => call.args.includes('rollback'))).toBe(true);
+  });
+
+  it('skips the check for an environment whose health is an empty string', async () => {
+    const manifest = `
+product: creatrgrid
+environments: { production: {} }
+components: { api: { type: cloudflare-worker, health: { production: "" } } }
+`;
+    const results = await deployComponents(options(manifest, fakeRun().run, respond(500)));
+    expect(results[0]?.status).toBe('deployed');
   });
 
   it('does not deploy when migrations fail', async () => {

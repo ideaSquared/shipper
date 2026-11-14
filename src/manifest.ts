@@ -13,6 +13,16 @@ const EnvironmentSchema = z.strictObject({
 
 const D1MigrationsSchema = z.strictObject({ d1: z.string().min(1) });
 
+// A health check: a path or URL, or { url, expect } to also require the response body to contain `expect`.
+const HealthCheckSchema = z.union([
+  z.string(),
+  z.strictObject({
+    url: z.string().min(1),
+    // Plain substring the response body must contain, e.g. '"status":"ok"'. Catches a 200 from the wrong app.
+    expect: z.string().min(1).optional(),
+  }),
+]);
+
 const CloudflareWorkerSchema = z.strictObject({
   type: z.literal('cloudflare-worker'),
   // Directory holding the component's wrangler config, relative to the repo root.
@@ -23,8 +33,9 @@ const CloudflareWorkerSchema = z.strictObject({
   // Path on the deployed URL (e.g. /health) or a full https URL. Polled after
   // deploy; a failure rolls the Worker back to its previous version. A record
   // ({ staging: ..., production: ... }) sets it per environment; an environment
-  // it leaves out has no health check.
-  health: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
+  // it leaves out has no health check. Each check is a string or { url, expect }; `expect` is only
+  // available inside the per-environment record.
+  health: z.union([z.string(), z.record(z.string(), HealthCheckSchema)]).optional(),
 });
 
 // Deployed by the repo's own workflow, which calls shipper's gate.yml before it and report.yml
@@ -88,6 +99,7 @@ export const ManifestSchema = z
 export type Manifest = z.infer<typeof ManifestSchema>;
 export type Component = Manifest['components'][string];
 export type CloudflareWorker = Extract<Component, { type: 'cloudflare-worker' }>;
+export type HealthCheck = { url: string; expect?: string | undefined };
 export type Environment = Manifest['environments'][string];
 
 export function parseManifest(text: string): Manifest {
@@ -105,7 +117,8 @@ export function environmentOf(manifest: Manifest, name: string): Environment {
 }
 
 // The component's health check for one environment, if it has one there.
-export function healthFor(component: CloudflareWorker, environment: string): string | undefined {
-  if (typeof component.health === 'object') return component.health[environment];
-  return component.health;
+export function healthFor(component: CloudflareWorker, environment: string): HealthCheck | undefined {
+  const health = typeof component.health === 'object' ? component.health[environment] : component.health;
+  if (typeof health === 'string') return health === '' ? undefined : { url: health };
+  return health;
 }

@@ -75,7 +75,8 @@ dispatch:
 2. **Deploy.** For each component, in the order written in `ship.yaml`: run `build`, apply D1
    migrations, then `wrangler deploy` with a message naming the commit and who shipped it. The first
    component that fails stops the rest.
-3. **Health check.** If a component sets `health`, poll it for about a minute. If it never answers,
+3. **Health check.** If a component sets `health`, poll it for about a minute. If it never answers
+   (or, with `expect`, never returns the expected text),
    run `wrangler rollback` to the previous version and fail the deploy. D1 migrations are
    forward-only and are not undone.
 
@@ -197,6 +198,20 @@ components:
 - `health` is either one path or URL for every environment, or a map from environment name to a
   path or URL. Every key must be an environment in `ship.yaml`. An environment the map leaves out
   has no health check: the component counts as deployed, with "no health check for staging".
+- A check can also require text in the response. Write it as `{ url, expect }` in the per-environment
+  map: the check then passes only on a success status whose body contains `expect` (a plain,
+  case-sensitive substring), which catches a 200 from the wrong app or a maintenance page. A plain
+  string still means "success status only", so existing manifests are unchanged.
+
+  ```yaml
+  health:
+    staging: { url: /api/v1/health, expect: '"status":"ok"' }
+    production: /api/v1/health
+  ```
+
+  A mismatch fails like any health failure (the Worker is rolled back) with a message such as
+  `health check for staging returned 200 but body did not contain "\"status\":\"ok\""; body was
+  "<html>Down for maintenance…"`, showing the first 120 characters of the body.
 - `build` runs with two extra environment variables: `SHIP_ENVIRONMENT` (the environment being
   deployed, e.g. `staging`) and `SHIP_WRANGLER_ENV` (its `wranglerEnv`, or empty when it has none).
 
