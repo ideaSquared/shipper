@@ -46,7 +46,8 @@ export class GitHubApiError extends Error {
 
 export type DeploymentSummary = { sha: string; createdAt: string; creator: string; state: string };
 export type RunSummary = { id: number; status: string; conclusion: string | null; url: string; createdAt: string };
-export type JobSummary = { name: string; status: string; conclusion: string | null };
+export type StepSummary = { name: string; status: string; conclusion: string | null };
+export type JobSummary = { name: string; status: string; conclusion: string | null; steps?: StepSummary[] };
 
 const CompareSchema = z.object({
   status: z.string(),
@@ -86,7 +87,14 @@ const RunSchema = z.object({
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
 const CreatedSchema = z.object({ id: z.number() });
 const JobsSchema = z.object({
-  jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
+  jobs: z.array(
+    z.object({
+      name: z.string(),
+      status: z.string(),
+      conclusion: z.string().nullable(),
+      steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional(),
+    }),
+  ),
 });
 
 const toRun = (run: z.infer<typeof RunSchema>): RunSummary => ({
