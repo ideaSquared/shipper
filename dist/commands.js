@@ -144,6 +144,19 @@ function look(state, s) {
     const [icon, tone] = STATE_LOOK[state] ?? ['⏳', 'warn'];
     return [icon, s[tone]];
 }
+// The step a running job is on, or undefined when it isn't running one.
+export function currentStep(job) {
+    if (job.status !== 'in_progress')
+        return undefined;
+    return job.steps?.find((step) => step.status === 'in_progress')?.name;
+}
+export function formatDuration(ms) {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+const HEARTBEAT_MS = 60_000;
 function jobLine(job, s) {
     const result = job.conclusion ?? job.status;
     const [icon, paint] = look(result, s);
@@ -158,6 +171,7 @@ export async function deploy(ctx, environment, options) {
     if (!ctx.canWrite)
         throw new Error('Deploying needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
     const requires = manifest.environments[env]?.requires ?? [];
+    ctx.print(`🔎 ${s.dim(`Checking ${short(head)} can ship to ${env}…`)}`);
     const [checkRuns, deployedTo, live] = await Promise.all([
         manifest.checks.length > 0 ? client.checkRuns(head) : Promise.resolve([]),
         client.deployedTo(head, requires),
@@ -201,6 +215,7 @@ export async function deploy(ctx, environment, options) {
     }
     const { workflow, environmentInput } = manifest.dispatch;
     const since = options.now();
+    ctx.print(`📨 ${s.dim(`Starting ${workflow} on ${ctx.defaultBranch}…`)}`);
     await client.dispatchWorkflow(workflow, ctx.defaultBranch, environmentInput ? { [environmentInput]: env } : {});
     return followRun(ctx, workflow, since, options, `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`);
 }
@@ -215,6 +230,7 @@ async function followRun(ctx, workflow, since, options, shipped) {
         await options.sleep(3000);
         return findRun(attempt + 1);
     };
+    ctx.print(`⏳ ${s.dim('Waiting for GitHub to start the run…')}`);
     const started = await findRun(1);
     if (!started) {
         ctx.print(`⏳ Started, but the run hasn't appeared yet. Check ${s.link(`https://github.com/${ctx.repo}/actions`)}`);
@@ -223,18 +239,37 @@ async function followRun(ctx, workflow, since, options, shipped) {
     ctx.print(`▶️  Started: ${s.link(started.url)}`);
     if (!options.wait)
         return 0;
-    const follow = async (seen) => {
+    const begun = options.now().getTime();
+    // seen: each job's last printed state and step. quietSince: when anything was last printed.
+    const follow = async (seen, quietSince) => {
         await options.sleep(options.pollMs ?? 10_000);
         const [run, jobs] = await Promise.all([client.run(started.id), client.jobs(started.id)]);
-        const changed = jobs.filter((job) => seen.get(job.name) !== (job.conclusion ?? job.status));
-        changed.forEach((job) => ctx.print(jobLine(job, s)));
-        const next = new Map(jobs.map((job) => [job.name, job.conclusion ?? job.status]));
+        const lines = jobs.flatMap((job) => {
+            const state = job.conclusion ?? job.status;
+            const step = currentStep(job);
+            const [prevState, prevStep] = (seen.get(job.name) ?? '').split('\u0000');
+            if (prevState !== state)
+                return [jobLine(job, s), ...(step ? [`      ↳ ${step}`] : [])];
+            return step && step !== prevStep ? [`      ↳ ${job.name} › ${step}`] : [];
+        });
+        lines.forEach((line) => ctx.print(line));
+        const now = options.now().getTime();
+        const running = jobs.flatMap((job) => {
+            const step = currentStep(job);
+            return step ? [`${job.name} › ${step}`] : job.status === 'in_progress' ? [job.name] : [];
+        });
+        const heartbeat = lines.length === 0 && run.status !== 'completed' && now - quietSince >= HEARTBEAT_MS;
+        if (heartbeat) {
+            ctx.print(`   ⏱️  ${s.dim(`Still running · ${formatDuration(now - begun)}${running.length > 0 ? ` · ${running.join(', ')}` : ''}`)}`);
+        }
+        const next = new Map(jobs.map((job) => [job.name, `${job.conclusion ?? job.status}\u0000${currentStep(job) ?? ''}`]));
         if (run.status !== 'completed')
-            return follow(next);
-        ctx.print(run.conclusion === 'success' ? shipped : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)}`);
+            return follow(next, lines.length > 0 || heartbeat ? now : quietSince);
+        const took = s.dim(`(${formatDuration(now - begun)})`);
+        ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
         return run.conclusion === 'success' ? 0 : 1;
     };
-    return follow(new Map());
+    return follow(new Map(), begun);
 }
 const wasLive = (deployment) => deployment.state === 'success' || deployment.state === 'inactive';
 // The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest

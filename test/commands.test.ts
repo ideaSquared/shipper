@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deploy,
   diff,
+  formatDuration,
   loadContext,
   log,
   pickEnvironment,
@@ -178,6 +179,7 @@ describe('deploy', () => {
     expect(await deploy(ctx, undefined, options())).toBe(0);
     expect(client.dispatched).toEqual([{ workflow: 'ci.yml', ref: 'main', inputs: {} }]);
     expect(lines).toEqual([
+      '🔎 Checking ccccccc can ship to production…',
       '📦 aaaaaaa → ccccccc · 2 commits',
       '   ccccccc newest feature · octocat',
       '   bbbbbbb older fix · hubot',
@@ -185,10 +187,12 @@ describe('deploy', () => {
       '🚨🚨🚨  PRODUCTION  🚨🚨🚨',
       'This changes what real users of gaminginit-bot get, as soon as it finishes.',
       '',
+      '📨 Starting ci.yml on main…',
+      '⏳ Waiting for GitHub to start the run…',
       '▶️  Started: https://github.com/acme/app/actions/runs/7',
       '   ✅ test: success',
       '   ✅ deploy / Deploy (production): success',
-      '🚀 Shipped ccccccc to production.',
+      '🚀 Shipped ccccccc to production. (0s)',
     ]);
   });
 
@@ -205,7 +209,11 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines).toEqual(["⛔ Can't ship ccccccc to production:", "   • check 'test' did not pass"]);
+    expect(lines).toEqual([
+      '🔎 Checking ccccccc can ship to production…',
+      "⛔ Can't ship ccccccc to production:",
+      "   • check 'test' did not pass",
+    ]);
   });
 
   it('does nothing when the commit is already live, unless asked to redeploy', async () => {
@@ -213,7 +221,7 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(0);
     expect(client.dispatched).toEqual([]);
-    expect(lines[0]).toContain('already live on production');
+    expect(lines[1]).toContain('already live on production');
 
     await deploy(ctx, undefined, options({ redeploy: true, wait: false }));
     expect(client.dispatched).toHaveLength(1);
@@ -234,7 +242,7 @@ describe('deploy', () => {
     });
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
-    expect(lines.at(-1)).toBe('💥 Deploy failure: https://run/7');
+    expect(lines.at(-1)).toBe('💥 Deploy failure: https://run/7 (0s)');
   });
 
   it('needs a dispatch workflow and a token', async () => {
@@ -251,7 +259,11 @@ describe('deploy', () => {
     const failing = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'failure' }] });
     const { ctx, lines } = context(failing);
     await deploy({ ...ctx, style }, undefined, options());
-    expect(lines).toEqual(["⛔ <bad>Can't ship ccccccc to production:</bad>", "   • <bad>check 'test' did not pass</bad>"]);
+    expect(lines).toEqual([
+      '🔎 <dim>Checking ccccccc can ship to production…</dim>',
+      "⛔ <bad>Can't ship ccccccc to production:</bad>",
+      "   • <bad>check 'test' did not pass</bad>",
+    ]);
   });
 
   it('refuses to put an older commit over what is live', async () => {
@@ -259,7 +271,11 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines).toEqual(["⛔ Can't ship ccccccc to production:", '   • ccccccc is older than aaaaaaa, which is live on production']);
+    expect(lines).toEqual([
+      '🔎 Checking ccccccc can ship to production…',
+      "⛔ Can't ship ccccccc to production:",
+      '   • ccccccc is older than aaaaaaa, which is live on production',
+    ]);
   });
 
   it('still deploys when GitHub cannot compare the commits, and says so', async () => {
@@ -274,7 +290,8 @@ describe('deploy', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options({ wait: false }))).toBe(0);
     expect(client.dispatched).toHaveLength(1);
-    expect(lines.slice(0, 3)).toEqual([
+    expect(lines.slice(0, 4)).toEqual([
+      '🔎 Checking ccccccc can ship to production…',
       '⚠️  Could not compare ccccccc with the live aaaaaaa: GitHub API returned 502',
       '⚠️  Could not list the commits going out: GitHub API returned 502',
       '📦 aaaaaaa → ccccccc',
@@ -313,6 +330,56 @@ describe('deploy', () => {
   });
 });
 
+describe('following a deploy', () => {
+  const job = (status: string, step?: string, conclusion: string | null = null): JobSummary => ({
+    name: 'deploy',
+    status,
+    conclusion,
+    steps: step ? [{ name: 'Set up job', status: 'completed', conclusion: 'success' }, { name: step, status: 'in_progress', conclusion: null }] : [],
+  });
+
+  it('shows the step each job is on, a heartbeat when nothing changes for a minute, and the total time', async () => {
+    const polls: { run: string; jobs: JobSummary[]; at: number }[] = [
+      { run: 'in_progress', jobs: [job('in_progress', 'Pull images')], at: 10 },
+      { run: 'in_progress', jobs: [job('in_progress', 'Pull images')], at: 40 },
+      { run: 'in_progress', jobs: [job('in_progress', 'Pull images')], at: 75 },
+      { run: 'in_progress', jobs: [job('in_progress', 'Start the stack')], at: 90 },
+      { run: 'completed', jobs: [job('completed', undefined, 'success')], at: 130 },
+    ];
+    let poll = -1;
+    let clock = 0;
+    const client = fakeClient({
+      run: async () => {
+        poll += 1;
+        clock = polls[poll]?.at ?? clock;
+        const state = polls[poll]?.run ?? 'completed';
+        return { id: 7, status: state, conclusion: state === 'completed' ? 'success' : null, url: 'https://run/7', createdAt: '' };
+      },
+      jobs: async () => polls[poll]?.jobs ?? [],
+    });
+    const { ctx, lines } = context(client);
+    const now = () => new Date(Date.UTC(2026, 10, 13, 21, 0, clock));
+    expect(await deploy(ctx, undefined, options({ now }))).toBe(0);
+    const from = lines.indexOf('▶️  Started: https://github.com/acme/app/actions/runs/7') + 1;
+    expect(lines.slice(from)).toEqual([
+      '   ⏳ deploy: in_progress',
+      '      ↳ Pull images',
+      '   ⏱️  Still running · 1m 15s · deploy › Pull images',
+      '      ↳ deploy › Start the stack',
+      '   ✅ deploy: success',
+      '🚀 Shipped ccccccc to production. (2m 10s)',
+    ]);
+  });
+});
+
+describe('formatDuration', () => {
+  it('reads as minutes and seconds', () => {
+    expect(formatDuration(0)).toBe('0s');
+    expect(formatDuration(59_400)).toBe('59s');
+    expect(formatDuration(130_000)).toBe('2m 10s');
+  });
+});
+
 describe('rollback', () => {
   const OLDER = 'dddddddd33333333dddddddd33333333dddddddd';
   const OLDEST = 'eeeeeeee44444444eeeeeeee44444444eeeeeeee';
@@ -341,10 +408,11 @@ describe('rollback', () => {
       '🚨🚨🚨  PRODUCTION  🚨🚨🚨',
       'This changes what real users of gaminginit-bot get, as soon as it finishes.',
       '',
+      '⏳ Waiting for GitHub to start the run…',
       '▶️  Started: https://github.com/acme/app/actions/runs/7',
       '   ✅ test: success',
       '   ✅ deploy / Deploy (production): success',
-      '⏪ Rolled production back to ddddddd.',
+      '⏪ Rolled production back to ddddddd. (0s)',
     ]);
   });
 

@@ -41,7 +41,12 @@ const RunSchema = z.object({
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
 const CreatedSchema = z.object({ id: z.number() });
 const JobsSchema = z.object({
-    jobs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })),
+    jobs: z.array(z.object({
+        name: z.string(),
+        status: z.string(),
+        conclusion: z.string().nullable(),
+        steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional(),
+    })),
 });
 const toRun = (run) => ({
     id: run.id,
