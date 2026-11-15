@@ -1,0 +1,13 @@
+# Every directory is listed separately so ownership can be split later
+# without restructuring. Today each product has a single owning team.
+
+* @ideaSquared/ops-platform
+
+# Top-level folders
+/dist/ @ideaSquared/ops-platform
+/src/ @ideaSquared/ops-platform
+/test/ @ideaSquared/ops-platform
+
+# Tooling and CI
+/.claude/ @ideaSquared/ops-platform
+/.github/ @ideaSquared/ops-platform
