@@ -239,7 +239,8 @@ async function followRun(ctx, workflow, since, options, shipped) {
     ctx.print(`▶️  Started: ${s.link(started.url)}`);
     if (!options.wait)
         return 0;
-    const begun = options.now().getTime();
+    // Elapsed time counts from the dispatch; the heartbeat's quiet clock starts at the "Started" line.
+    const begun = since.getTime();
     // seen: each job's last printed state and step. quietSince: when anything was last printed.
     const follow = async (seen, quietSince) => {
         await options.sleep(options.pollMs ?? 10_000);
@@ -269,7 +270,7 @@ async function followRun(ctx, workflow, since, options, shipped) {
         ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
         return run.conclusion === 'success' ? 0 : 1;
     };
-    return follow(new Map(), begun);
+    return follow(new Map(), options.now().getTime());
 }
 const wasLive = (deployment) => deployment.state === 'success' || deployment.state === 'inactive';
 // The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest

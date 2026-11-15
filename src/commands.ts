@@ -304,7 +304,8 @@ async function followRun(ctx: Context, workflow: string, since: Date, options: F
   ctx.print(`▶️  Started: ${s.link(started.url)}`);
   if (!options.wait) return 0;
 
-  const begun = options.now().getTime();
+  // Elapsed time counts from the dispatch; the heartbeat's quiet clock starts at the "Started" line.
+  const begun = since.getTime();
   // seen: each job's last printed state and step. quietSince: when anything was last printed.
   const follow = async (seen: ReadonlyMap<string, string>, quietSince: number): Promise<number> => {
     await options.sleep(options.pollMs ?? 10_000);
@@ -332,7 +333,7 @@ async function followRun(ctx: Context, workflow: string, since: Date, options: F
     ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
     return run.conclusion === 'success' ? 0 : 1;
   };
-  return follow(new Map(), begun);
+  return follow(new Map(), options.now().getTime());
 }
 
 const wasLive = (deployment: DeploymentSummary) => deployment.state === 'success' || deployment.state === 'inactive';

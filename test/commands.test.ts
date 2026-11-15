@@ -370,6 +370,24 @@ describe('following a deploy', () => {
       '🚀 Shipped ccccccc to production. (2m 10s)',
     ]);
   });
+  it('counts the total from the dispatch, including the wait for the run to appear', async () => {
+    let clock = 0;
+    const client = fakeClient({
+      findDispatchedRun: async () => {
+        clock = 45;
+        return { id: 7, status: 'queued', conclusion: null, url: 'https://github.com/acme/app/actions/runs/7', createdAt: '' };
+      },
+      run: async () => {
+        clock = 55;
+        return { id: 7, status: 'completed', conclusion: 'success', url: 'https://run/7', createdAt: '' };
+      },
+      jobs: async () => [job('completed', undefined, 'success')],
+    });
+    const { ctx, lines } = context(client);
+    const now = () => new Date(Date.UTC(2026, 10, 13, 21, 0, clock));
+    expect(await deploy(ctx, undefined, options({ now }))).toBe(0);
+    expect(lines.at(-1)).toBe('🚀 Shipped ccccccc to production. (55s)');
+  });
 });
 
 describe('formatDuration', () => {
