@@ -326,12 +326,15 @@ export async function rollback(ctx, environment, options) {
     const [live, deployments] = await Promise.all([client.lastSuccessfulDeployment(env), client.deployments(env, 50)]);
     if (!live)
         throw new Error(`${env} has never been deployed, so there is nothing to roll back.`);
-    const target = rollbackTarget(deployments, live, env, options.to);
-    const comparison = await client.compare(target, live).catch((error) => {
+    // A release whose smoke checks failed is recorded as `error` but is still what's running (nothing rolled it
+    // back), so roll back from it: the last `success` release is then a valid target, not "already live".
+    const running = deployments[0]?.state === 'error' ? deployments[0].sha : live;
+    const target = rollbackTarget(deployments, running, env, options.to);
+    const comparison = await client.compare(target, running).catch((error) => {
         ctx.print(`⚠️  ${s.warn(`Could not list the commits being taken out: ${error instanceof Error ? error.message : String(error)}`)}`);
         return undefined;
     });
-    ctx.print(`⏪ live ${s.sha(short(live))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`);
+    ctx.print(`⏪ live ${s.sha(short(running))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`);
     if (comparison)
         printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
     if (!(await approve(ctx, env, `⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`, options))) {

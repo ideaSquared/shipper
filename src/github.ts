@@ -32,7 +32,8 @@ export type EnvironmentSummary = { name: string; requiredReviewers: boolean };
 
 export type NewDeployment = { sha: string; environment: string; actor: string; production: boolean };
 export type NewDeploymentStatus = {
-  state: 'in_progress' | 'success' | 'failure';
+  // `error`: deployed and live, but its smoke checks failed (see main.ts); `failure`: not live.
+  state: 'in_progress' | 'success' | 'failure' | 'error';
   logUrl?: string;
   environmentUrl?: string;
   description?: string;
