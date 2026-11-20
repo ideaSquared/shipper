@@ -6,9 +6,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from './commands.ts';
 import { createGitHubClient } from './github.ts';
-import { GitHubApiError } from './github.ts';
+import { GitHubApiError, isAccessError } from './github.ts';
 import {
   accessHint,
+  RATE_LIMIT_HINT,
   activeProducts,
   assertShippable,
   ownerFromCodeowners,
@@ -136,9 +137,8 @@ main().then(
   async (error: unknown) => {
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
-    if (current && error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
-      console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-    }
+    if (error instanceof GitHubApiError && error.rateLimited) console.error(`⏳ ${RATE_LIMIT_HINT}`);
+    else if (current && isAccessError(error)) console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
     process.exit(1);
   },
 );

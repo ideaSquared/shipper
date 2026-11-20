@@ -6,8 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
 import { createGitHubClient } from "./github.js";
-import { GitHubApiError } from "./github.js";
-import { accessHint, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
+import { GitHubApiError, isAccessError } from "./github.js";
+import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
 import { terminalStyle } from "./style.js";
 const HELP = `🚢 ship: deploy ideaSquared products
 
@@ -120,8 +120,9 @@ async function main() {
 main().then((code) => process.exit(code), async (error) => {
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
-    if (current && error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
+    if (error instanceof GitHubApiError && error.rateLimited)
+        console.error(`⏳ ${RATE_LIMIT_HINT}`);
+    else if (current && isAccessError(error))
         console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-    }
     process.exit(1);
 });

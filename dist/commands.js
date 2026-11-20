@@ -1,7 +1,8 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { evaluateGate } from "./gate.js";
-import { GitHubApiError } from "./github.js";
+import { GitHubApiError, isAccessError } from "./github.js";
 import { parseManifest } from "./manifest.js";
+import { accessHint, RATE_LIMIT_HINT } from "./products.js";
 import { plain } from "./style.js";
 export const DEFAULT_ROLLBACK_WORKFLOW = 'ship-rollback.yml';
 const short = (sha) => sha.slice(0, 7);
@@ -82,8 +83,12 @@ export async function statusAll(products, load, print, style) {
             return lines;
         }
         catch (error) {
-            // One line per product that can't be read, never a half-printed section above it.
-            return [`⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`];
+            // One line per product that can't be read, never a half-printed section above it, plus the
+            // same access or rate-limit hint a single-product command gives.
+            const line = `⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`;
+            if (error instanceof GitHubApiError && error.rateLimited)
+                return [line, `   ⏳ ${RATE_LIMIT_HINT}`];
+            return isAccessError(error) ? [line, `   🔑 ${accessHint(repo, undefined)}`] : [line];
         }
     }));
     sections.forEach((lines, index) => {

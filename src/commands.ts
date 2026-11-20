@@ -1,7 +1,8 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { evaluateGate } from './gate.ts';
-import { GitHubApiError, type DeploymentSummary, type GitHubClient, type JobSummary } from './github.ts';
+import { GitHubApiError, isAccessError, type DeploymentSummary, type GitHubClient, type JobSummary } from './github.ts';
 import { parseManifest, type Manifest } from './manifest.ts';
+import { accessHint, RATE_LIMIT_HINT } from './products.ts';
 import { plain, type Style } from './style.ts';
 
 export type Context = {
@@ -133,8 +134,11 @@ export async function statusAll(
         await status(await load(repo, (line) => lines.push(line)));
         return lines;
       } catch (error) {
-        // One line per product that can't be read, never a half-printed section above it.
-        return [`⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`];
+        // One line per product that can't be read, never a half-printed section above it, plus the
+        // same access or rate-limit hint a single-product command gives.
+        const line = `⚠️  ${style.bold(name)} ${style.dim(`(${repo})`)}: ${error instanceof Error ? error.message : String(error)}`;
+        if (error instanceof GitHubApiError && error.rateLimited) return [line, `   ⏳ ${RATE_LIMIT_HINT}`];
+        return isAccessError(error) ? [line, `   🔑 ${accessHint(repo, undefined)}`] : [line];
       }
     }),
   );

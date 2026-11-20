@@ -78,6 +78,8 @@ export function accessHint(repo: string, owner: string | undefined): string {
     : `You may not have access to ${repo}. Ask a GitHub org admin to add you to its team.`;
 }
 
+export const RATE_LIMIT_HINT = "GitHub's API rate limit is used up. Sign in (`gh auth login` or GH_TOKEN) or try again later.";
+
 // owner/name from a GitHub remote URL (https or ssh), or undefined for anything else.
 export function repoFromRemote(remote: string): string | undefined {
   const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(remote.trim());
