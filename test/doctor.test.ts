@@ -121,9 +121,9 @@ describe('doctor', () => {
   });
 
   it('warns when CODEOWNERS has no * line, and finds it in the other locations', async () => {
-    const without = await run(client({}, { ...FILES, '.github/CODEOWNERS': '/docs @acme/docs\n' }));
-    expect(without.code).toBe(0);
-    expect(without.text).toContain("CODEOWNERS has no '*' line");
+    const noStar = await run(client({}, { ...FILES, '.github/CODEOWNERS': '/docs @acme/docs\n' }));
+    expect(noStar.code).toBe(0);
+    expect(noStar.text).toContain("CODEOWNERS has no '*' line");
     const elsewhere = await run(client({}, { ...without(FILES, '.github/CODEOWNERS'), 'docs/CODEOWNERS': '* @acme/team' }));
     expect(elsewhere.text).toContain("✅ CODEOWNERS has a '*' line (@acme/team)");
   });
