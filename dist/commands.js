@@ -1,6 +1,7 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { evaluateGate } from "./gate.js";
 import { GitHubApiError, isAccessError } from "./github.js";
+import { pendingMigrations } from "./migrations.js";
 import { parseManifest } from "./manifest.js";
 import { accessHint, RATE_LIMIT_HINT } from "./products.js";
 import { plain } from "./style.js";
@@ -105,6 +106,21 @@ function printCommits(ctx, commits, total, max) {
     if (total > newest.length)
         ctx.print(s.dim(`   …and ${total - newest.length} more`));
 }
+// The migrations a deploy adds, when ship.yaml says where they live; nothing when there are none.
+function printMigrations(ctx, comparison) {
+    const directories = ctx.manifest.migrations;
+    if (!directories)
+        return;
+    const s = ctx.style;
+    const { added, changed, truncated } = pendingMigrations(comparison.files ?? [], directories);
+    if (added.length > 0) {
+        ctx.print(`🗄️  ${s.warn(`${added.length} ${added.length === 1 ? 'migration' : 'migrations'} going out:`)}`);
+        added.forEach((file) => ctx.print(`   ${file}`));
+    }
+    changed.forEach((file) => ctx.print(`⚠️  ${s.warn(`${file} was changed or removed, but shipped migrations shouldn't change`)}`));
+    if (truncated)
+        ctx.print(s.dim(`   …and more, see the compare: ${comparison.url}`));
+}
 export async function diff(ctx, environment) {
     const s = ctx.style;
     const env = pickEnvironment(ctx.manifest, environment);
@@ -120,6 +136,7 @@ export async function diff(ctx, environment) {
     const comparison = await ctx.client.compare(live, ctx.head);
     ctx.print(`📦 ${s.env(env)}: ${s.sha(short(live))} → ${s.sha(short(ctx.head))} · ${s.warn(`${comparison.totalCommits} commits waiting`)}`);
     printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
+    printMigrations(ctx, comparison);
     ctx.print(`🔗 ${s.link(comparison.url)}`);
     return 0;
 }
@@ -208,8 +225,10 @@ export async function deploy(ctx, environment, options) {
     if (live && live !== head) {
         const comparison = await client.compare(live, head).catch(unknown('list the commits going out'));
         ctx.print(`📦 ${s.sha(short(live))} → ${s.sha(short(head))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits`)}` : ''}`);
-        if (comparison)
+        if (comparison) {
             printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
+            printMigrations(ctx, comparison);
+        }
     }
     else if (!live) {
         ctx.print(`🆕 First ship to ${s.env(env)}: ${s.sha(short(head))}`);

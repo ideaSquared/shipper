@@ -97,6 +97,10 @@ describe('createGitHubClient', () => {
         status: 'ahead',
         total_commits: 1,
         html_url: 'https://github.com/acme/app/compare/aaa...bbb',
+        files: [
+          { filename: 'db/0002_new.sql', status: 'added' },
+          { filename: 'db/0003_renamed.sql', status: 'renamed', previous_filename: 'db/old.sql' },
+        ],
         commits: [
           {
             sha: 'bbb',
@@ -110,6 +114,10 @@ describe('createGitHubClient', () => {
     expect(await createGitHubClient('acme/app', 'token', fetch).compare('aaa', 'bbb')).toEqual({
       totalCommits: 1,
       url: 'https://github.com/acme/app/compare/aaa...bbb',
+      files: [
+        { filename: 'db/0002_new.sql', status: 'added' },
+        { filename: 'db/0003_renamed.sql', status: 'renamed', previousFilename: 'db/old.sql' },
+      ],
       commits: [{ sha: 'bbb', message: 'fix: thing (#3)', author: 'Octo Cat', url: 'https://github.com/acme/app/commit/bbb' }],
     });
   });

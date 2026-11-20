@@ -87,6 +87,10 @@ export const ManifestSchema = z
         rollbackWorkflow: z.string().min(1).optional(),
       })
       .optional(),
+    // Repo-relative directories holding migration files (`*` matches one path segment, e.g.
+    // services/*/src/migrations). `ship diff` and the deploy preview list the files a deploy adds there.
+    // Not the component-level `migrations: { d1 }`, which names the D1 binding to apply.
+    migrations: z.array(z.string().min(1)).optional(),
     // Post-deploy smoke checks per environment, requested once after every component deployed and passed its
     // health check. A failure fails the deploy but does not roll back.
     smoke: z.record(z.string(), z.array(SmokeCheckSchema)).optional(),
