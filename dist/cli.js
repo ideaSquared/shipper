@@ -6,7 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
 import { createGitHubClient } from "./github.js";
-import { parseTarget, PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
+import { GitHubApiError } from "./github.js";
+import { accessHint, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
 import { terminalStyle } from "./style.js";
 const HELP = `🚢 ship: deploy ideaSquared products
 
@@ -25,7 +26,10 @@ Options:
   --redeploy          deploy even if that commit is already live
   --to <sha>          rollback: the earlier live commit to put back (7+ characters)
 
-Products: ${Object.keys(PRODUCTS).join(', ')}. Inside a repo's folder the product is optional.
+Products (inside a repo's folder the product is optional):
+${Object.entries(PRODUCTS)
+    .map(([name, product]) => `  ${name.padEnd(17)}${product.description}${product.retired ? ` · 🪦 retired: ${product.retired}` : ''}`)
+    .join('\n')}
 Sign-in: GH_TOKEN, GITHUB_TOKEN or your gh login.`;
 function quiet(command, args) {
     try {
@@ -50,6 +54,16 @@ async function ask(question) {
     const answer = await rl.question(`${question} `);
     rl.close();
     return answer;
+}
+// The repo being worked on, so a GitHub refusal can name its owner.
+let current;
+async function ownerOf(client) {
+    for (const path of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
+        const text = await client.readFile(path, 'HEAD').catch(() => undefined);
+        if (text)
+            return ownerFromCodeowners(text);
+    }
+    return undefined;
 }
 async function main() {
     const { values, positionals } = parseArgs({
@@ -79,13 +93,16 @@ async function main() {
     const choice = { repo: values.repo, product, remote: quiet('git', ['remote', 'get-url', 'origin']) };
     // `ship status` outside any product's folder (including another repo's), or `ship status all`.
     const remoteRepo = repoFromRemote(choice.remote ?? '')?.toLowerCase();
-    const inProductFolder = Object.values(PRODUCTS).some((repo) => repo.toLowerCase() === remoteRepo);
+    const inProductFolder = Object.values(PRODUCTS).some((p) => p.repo.toLowerCase() === remoteRepo);
     const wantsAll = environment === 'all' || (!choice.repo && !choice.product && !inProductFolder);
     if (command === 'status' && wantsAll) {
-        return statusAll(PRODUCTS, (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
+        return statusAll(activeProducts(), (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
     }
+    if ((command === 'deploy' || command === 'rollback') && !values.repo)
+        assertShippable(product);
     const repo = resolveRepo(choice);
     const client = createGitHubClient(repo, token);
+    current = { repo, client };
     const ctx = await loadContext(client, repo, print, Boolean(token), style);
     if (command === 'status')
         return status(ctx);
@@ -98,8 +115,11 @@ async function main() {
         return rollback(ctx, environment, { ...run, to: values.to });
     return deploy(ctx, environment, { ...run, redeploy: values.redeploy });
 }
-main().then((code) => process.exit(code), (error) => {
+main().then((code) => process.exit(code), async (error) => {
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
+    if (current && error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
+        console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
+    }
     process.exit(1);
 });

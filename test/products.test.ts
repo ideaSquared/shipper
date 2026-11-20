@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseTarget, repoFromRemote, resolveRepo } from '../src/products.ts';
+import {
+  accessHint,
+  activeProducts,
+  assertShippable,
+  ownerFromCodeowners,
+  parseTarget,
+  repoFromRemote,
+  resolveRepo,
+} from '../src/products.ts';
 
 describe('repoFromRemote', () => {
   it('reads https and ssh GitHub remotes', () => {
@@ -34,5 +42,44 @@ describe('parseTarget', () => {
     expect(parseTarget(['staging'])).toEqual({ product: undefined, environment: 'staging' });
     expect(parseTarget(['creatrgrid'])).toEqual({ product: 'creatrgrid', environment: undefined });
     expect(parseTarget([])).toEqual({ product: undefined, environment: undefined });
+  });
+});
+
+describe('retired products', () => {
+  it('keeps a retired product resolvable for read-only commands', () => {
+    expect(resolveRepo({ product: 'gaminginit' })).toBe('ideaSquared/gaminginit');
+  });
+
+  it('leaves retired products out of the active list', () => {
+    expect(activeProducts()).not.toHaveProperty('gaminginit');
+    expect(activeProducts()).toHaveProperty('gaminginit-bot', 'ideaSquared/gaminginit-bot');
+  });
+
+  it('refuses to deploy or roll back a retired product, saying why', () => {
+    expect(() => assertShippable('gaminginit')).toThrow(/gaminginit is retired \(.+\)\. Nothing to ship\./);
+    expect(() => assertShippable('gaminginit-bot')).not.toThrow();
+    expect(() => assertShippable(undefined)).not.toThrow();
+  });
+
+  it('still finds a retired product named on the command line', () => {
+    expect(parseTarget(['gaminginit', 'production'])).toEqual({ product: 'gaminginit', environment: 'production' });
+  });
+});
+
+describe('owners from CODEOWNERS', () => {
+  it('takes the first owner on the catch-all line, skipping comments and other paths', () => {
+    const text = ['# Today each product has a single owning team.', '', '/docs/ @ideaSquared/docs', '* @ideaSquared/creatrgrid @someone', '/src/ @ideaSquared/creatrgrid'].join('\n');
+    expect(ownerFromCodeowners(text)).toBe('@ideaSquared/creatrgrid');
+  });
+
+  it('finds no owner without a catch-all line', () => {
+    expect(ownerFromCodeowners('/src/ @ideaSquared/x\n')).toBeUndefined();
+  });
+
+  it('names the owner in the access hint, or points to an org admin when unknown', () => {
+    expect(accessHint('ideaSquared/creatrgrid', '@ideaSquared/creatrgrid')).toBe(
+      "You may not have access to ideaSquared/creatrgrid. It's owned by @ideaSquared/creatrgrid: ask them for write access.",
+    );
+    expect(accessHint('ideaSquared/creatrgrid', undefined)).toContain('Ask a GitHub org admin');
   });
 });

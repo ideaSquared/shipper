@@ -28,6 +28,14 @@ ship rollback gaminginit-bot production    # put back the commit that was live b
 - `ship status all` lists every product in `src/products.ts`, from any folder. A bare `ship status`
   does the same outside a product's checkout; inside one (or with `--repo`) it shows only that
   product. A product that can't be read shows as one ⚠️ line.
+- Each product in `src/products.ts` has a `repo` and a `description` (shown in `ship help`), and can be
+  marked `retired: '<why and when>'`. A retired product drops out of `ship status all` and the
+  product list, and `deploy`, `production` and `rollback` refuse it with 🪦. `status`, `diff` and `log`
+  still work, so its history stays readable; `--repo owner/name` bypasses the check for an emergency.
+- The owner isn't stored in shipper: it's the team on the `*` line of the repo's CODEOWNERS. When
+  GitHub refuses you (403/404), `ship` reads that file and names the team to ask. For a private repo
+  you can't read, it says to ask an org admin. Naming the owner grants nothing: access comes from
+  the team's write access to the repo, and the `production` environment's required reviewers.
 - The environment is optional when `ship.yaml` has only one.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
@@ -227,8 +235,9 @@ components:
    environments need a paid GitHub plan.
 3. Put `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in that Environment or in the repo
    secrets. `SHIP_NOTIFY_SECRET` comes from the org.
-4. Add the product to `src/products.ts` so `ship status` lists it and `ship <command> <product>`
-   finds it, then run `pnpm build`.
+4. Add the product to `src/products.ts` (`repo` and `description`) so `ship status` lists it and
+   `ship <command> <product>` finds it, then run `pnpm build`. Make sure the repo's CODEOWNERS has a
+   `*` line naming its owning team.
 5. Call the workflow from a job:
 
 ```yaml
