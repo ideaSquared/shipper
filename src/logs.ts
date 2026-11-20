@@ -53,6 +53,8 @@ export async function logs(plan: LogsPlan, io: LogsIo): Promise<number> {
   const prefixed = plan.tails.length > 1;
   const width = Math.max(...plan.tails.map((t) => t.name.length));
   let stopped = false;
+  // Kept apart from exit codes: stopping the others with Ctrl-C must not turn a failed start into success.
+  let startFailed = false;
   const children = plan.tails.map((tail) => {
     const label = `[${tail.name}]`.padEnd(width + 2);
     const onLine = (line: string) => io.print(prefixed ? `${label} ${line}` : line);
@@ -69,12 +71,14 @@ export async function logs(plan: LogsPlan, io: LogsIo): Promise<number> {
   const codes = await Promise.all(
     children.map(({ tail, child }) =>
       child.done.catch((error: unknown) => {
+        startFailed = true;
         io.print(`❌ ${tail.name}: could not start wrangler (${error instanceof Error ? error.message : String(error)})`);
         return 1;
       }),
     ),
   );
   // After Ctrl-C the children's own exit codes (killed by a signal) are not failures.
+  if (startFailed) return 1;
   return stopped ? 0 : codes.some((code) => code !== 0) ? 1 : 0;
 }
 

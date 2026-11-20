@@ -81,6 +81,20 @@ describe('logs', () => {
     expect(code).toBe(1);
     expect(out.some((l) => l.includes('web') && l.includes('ENOENT'))).toBe(true);
   });
+  it('still exits 1 for a failed start when Ctrl-C stops a sibling that kept streaming', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { spawnTail } = fakeSpawn(async (plan) => {
+      if (plan.name === 'web') throw new Error('spawn pnpm ENOENT');
+      return (await gate, 130);
+    });
+    const result = logs(planLogs(MANIFEST, 'staging', '/repo'), {
+      spawnTail,
+      print: () => {},
+      onStop: (stop) => setTimeout(() => (stop(), release()), 0),
+    });
+    expect(await result).toBe(1);
+  });
   it('exits 1 with a message when only external components remain', async () => {
     const out: string[] = [];
     const { spawnTail } = fakeSpawn(async () => 0);
