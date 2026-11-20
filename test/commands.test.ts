@@ -84,6 +84,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     writeVariable: async () => {},
     deleteVariable: async () => {},
     currentUser: async () => 'octocat',
+    environments: async () => [],
   };
   return Object.assign({ ...base, ...overrides }, { dispatched });
 }
@@ -166,6 +167,100 @@ describe('diff', () => {
       '   bbbbbbb older fix · hubot',
       '🔗 https://github.com/acme/app/compare/a...c',
     ]);
+  });
+});
+
+describe('pending migrations', () => {
+  const WITH_MIGRATIONS = `${MANIFEST}migrations: [packages/db/migrations, services/*/src/migrations]\n`;
+  const withFiles = (files: { filename: string; status: string; previousFilename?: string }[]) =>
+    fakeClient({
+      compare: async () => ({
+        totalCommits: 1,
+        url: 'https://github.com/acme/app/compare/a...c',
+        commits: [{ sha: HEAD, message: 'newest feature', author: 'octocat', url: 'u' }],
+        files,
+      }),
+    });
+
+  it('lists the migration files a diff adds, and ignores other files and subfolders', async () => {
+    const { ctx, lines } = context(
+      withFiles([
+        { filename: 'packages/db/migrations/0012_add_plans.sql', status: 'added' },
+        { filename: 'services/auth/src/migrations/004_x.ts', status: 'added' },
+        { filename: 'packages/db/migrations/meta/_journal.json', status: 'modified' },
+        { filename: 'src/index.ts', status: 'modified' },
+        { filename: 'services/auth/src/other/005.ts', status: 'added' },
+      ]),
+      WITH_MIGRATIONS,
+    );
+    await diff(ctx, undefined);
+    expect(lines).toEqual([
+      '📦 production: aaaaaaa → ccccccc · 1 commits waiting',
+      '   ccccccc newest feature · octocat',
+      '🗄️  2 migrations going out:',
+      '   packages/db/migrations/0012_add_plans.sql',
+      '   services/auth/src/migrations/004_x.ts',
+      '🔗 https://github.com/acme/app/compare/a...c',
+    ]);
+  });
+
+  it('warns about modified or removed shipped migrations', async () => {
+    const { ctx, lines } = context(
+      withFiles([
+        { filename: 'packages/db/migrations/0001_init.sql', status: 'modified' },
+        { filename: 'packages/db/migrations/0002_gone.sql', status: 'removed' },
+        { filename: 'packages/db/migrations/0003_moved.sql', status: 'renamed', previousFilename: 'packages/db/migrations/0003_old.sql' },
+      ]),
+      WITH_MIGRATIONS,
+    );
+    await diff(ctx, undefined);
+    expect(lines.filter((line) => line.startsWith('⚠️'))).toEqual([
+      "⚠️  packages/db/migrations/0001_init.sql was changed or removed, but shipped migrations shouldn't change",
+      "⚠️  packages/db/migrations/0002_gone.sql was changed or removed, but shipped migrations shouldn't change",
+      "⚠️  packages/db/migrations/0003_moved.sql was changed or removed, but shipped migrations shouldn't change",
+    ]);
+    expect(lines.some((line) => line.includes('going out'))).toBe(false);
+  });
+
+  it('prints nothing when there are none, or when ship.yaml has no migrations field', async () => {
+    const none = context(withFiles([{ filename: 'src/index.ts', status: 'modified' }]), WITH_MIGRATIONS);
+    await diff(none.ctx, undefined);
+    const unset = context(withFiles([{ filename: 'packages/db/migrations/0012_x.sql', status: 'added' }]));
+    await diff(unset.ctx, undefined);
+    expect(none.lines).toHaveLength(3);
+    expect(unset.lines).toHaveLength(3);
+  });
+
+  it('says there may be more when GitHub capped the file list', async () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({ filename: `src/f${i}.ts`, status: 'modified' }));
+    const { ctx, lines } = context(withFiles(files), WITH_MIGRATIONS);
+    await diff(ctx, undefined);
+    expect(lines).toContain('   …and more, see the compare: https://github.com/acme/app/compare/a...c');
+  });
+
+  it('shows them in the deploy preview before asking to confirm', async () => {
+    const { ctx, lines } = context(
+      withFiles([{ filename: 'packages/db/migrations/0012_add_plans.sql', status: 'added' }]),
+      WITH_MIGRATIONS,
+    );
+    await deploy(ctx, undefined, options({ wait: false }));
+    expect(lines.slice(1, 5)).toEqual([
+      '📦 aaaaaaa → ccccccc · 1 commits',
+      '   ccccccc newest feature · octocat',
+      '🗄️  1 migration going out:',
+      '   packages/db/migrations/0012_add_plans.sql',
+    ]);
+  });
+
+  it('keeps deploying when the compare fails, with only the existing warning', async () => {
+    const client = fakeClient({
+      compare: async () => {
+        throw new Error('GitHub API returned 502');
+      },
+    });
+    const { ctx, lines } = context(client, WITH_MIGRATIONS);
+    expect(await deploy(ctx, undefined, options({ wait: false }))).toBe(0);
+    expect(lines.filter((line) => line.includes('migration'))).toEqual([]);
   });
 });
 

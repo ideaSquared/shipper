@@ -32,7 +32,11 @@ export type GitHubClient = {
   deleteVariable(name: string): Promise<void>;
   // The GitHub login the token belongs to.
   currentUser(): Promise<string>;
+  // The repo's GitHub Environments. Needs admin access to read.
+  environments(): Promise<EnvironmentSummary[]>;
 };
+
+export type EnvironmentSummary = { name: string; requiredReviewers: boolean };
 
 export type NewDeployment = { sha: string; environment: string; actor: string; production: boolean };
 export type NewDeploymentStatus = {
@@ -92,6 +96,7 @@ const CompareSchema = z.object({
       }),
     )
     .default([]),
+  files: z.array(z.object({ filename: z.string(), status: z.string(), previous_filename: z.string().optional() })).default([]),
 });
 const DeploymentShasSchema = z.array(z.object({ id: z.number(), sha: z.string() }));
 const CheckRunsSchema = z.object({
@@ -126,6 +131,10 @@ const JobsSchema = z.object({
       steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional(),
     }),
   ),
+});
+
+const EnvironmentsSchema = z.object({
+  environments: z.array(z.object({ name: z.string(), protection_rules: z.array(z.object({ type: z.string() })).default([]) })),
 });
 
 const toRun = (run: z.infer<typeof RunSchema>): RunSummary => ({
@@ -231,6 +240,12 @@ export function createGitHubClient(repository: string, token: string | undefined
       return {
         totalCommits: pages[0]?.total_commits ?? commits.length,
         url: pages[0]?.html_url ?? '',
+        // GitHub lists up to 300 files, the same on every page, so the first page has them all.
+        files: (pages[0]?.files ?? []).map(({ filename, status, previous_filename }) => ({
+          filename,
+          status,
+          ...(previous_filename ? { previousFilename: previous_filename } : {}),
+        })),
         commits: commits.map((commit) => ({
           sha: commit.sha,
           message: commit.commit.message.split('\n')[0] ?? '',
@@ -352,6 +367,14 @@ export function createGitHubClient(repository: string, token: string | undefined
     async currentUser() {
       const response = await request(`${BASE}/user`);
       return UserSchema.parse(await response.json()).login;
+    },
+    async environments() {
+      return getAll('/environments?per_page=100', EnvironmentsSchema, (page) =>
+        page.environments.map((environment) => ({
+          name: environment.name,
+          requiredReviewers: environment.protection_rules.some((rule) => rule.type === 'required_reviewers'),
+        })),
+      );
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

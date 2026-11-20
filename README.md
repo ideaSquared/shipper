@@ -16,13 +16,14 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ```bash
 ship status all                            # every product: what is live, and how far behind its default branch
 ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
-ship diff gaminginit-bot                   # the commits waiting to ship
+ship diff gaminginit-bot                   # the commits waiting to ship (and any new migrations)
 ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
 ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
 ship freeze gaminginit-bot production --reason "db incident"   # block deploys, with a reason everyone sees
 ship unfreeze gaminginit-bot production    # lift it (no environment: lift everything)
+ship doctor gaminginit-bot [production]    # check the deploy setup before anyone deploys
 ship logs gaminginit-bot staging           # stream live logs (wrangler tail) of a deployed environment
 ship logs staging --component api          # just one component
 ```
@@ -47,6 +48,16 @@ ship logs staging --component api          # just one component
   you can't read, it says to ask an org admin. Naming the owner grants nothing: access comes from
   the team's write access to the repo, and the `production` environment's required reviewers.
 - The environment is optional when `ship.yaml` has only one.
+- `ship doctor [product] [env]` finds setup mistakes with a command instead of a failed deploy. It
+  prints one line per check (✅ pass, ⚠️ warning, ❌ failure, with a fix hint on the last two) and
+  exits 1 if any check failed. With an environment, only that environment's checks run. It checks:
+  `ship.yaml` exists on the default branch and parses; the `dispatch` and rollback workflow files exist;
+  each environment exists as a GitHub Environment; `production` and any environment with `requires`
+  has required reviewers (⚠️); CODEOWNERS has a `*` line (⚠️); each `checks:` name is a check run on
+  the default branch head (a typo there blocks every deploy); and each absolute `https://` health URL
+  answers (any HTTP status counts; a DNS failure, TLS error or 10s timeout fails). Reading
+  Environments needs admin access: without it that check is one ⚠️ line, not a crash. It does not
+  check Cloudflare Worker secrets, which would need a Cloudflare token.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits
@@ -199,6 +210,7 @@ product: creatrgrid
 discord: creatrgrid              # bot project for the deploy message (optional)
 dispatch: { workflow: deploy.yml, environmentInput: environment }   # for ship deploy (optional)
 checks: [verify, e2e]            # check runs that must pass on the commit (optional)
+migrations: [packages/db/migrations]   # where migration files live, shown by ship diff (optional)
 environments:
   staging:
     wranglerEnv: staging         # passed to wrangler --env (optional)
@@ -218,6 +230,35 @@ components:                      # deployed in this order
 
 Unknown keys are rejected, so a typo fails the deploy instead of being ignored. `cloudflare-worker`
 is the only component type so far.
+
+### Showing pending migrations
+
+The top-level `migrations` lists repo-relative directories that hold migration files. It is
+unrelated to a component's `migrations: { d1: DB }`, which names the D1 binding to apply when
+deploying; this one only makes `ship diff` and the `ship deploy` preview show what is coming.
+
+```yaml
+migrations: [packages/db/migrations]          # one folder
+migrations: [services/*/src/migrations]       # `*` matches one path segment (no other wildcards)
+```
+
+Between the live commit and the one going out, `ship diff` and the deploy preview then print the
+files added directly in those folders:
+
+```
+🗄️  2 migrations going out:
+   packages/db/migrations/0012_add_plans.sql
+   packages/db/migrations/0013_backfill.sql
+```
+
+- A shipped migration that was modified, removed or renamed out of its folder gets a ⚠️ line, since
+  shipped migrations shouldn't change.
+- Only files directly in a listed folder count, so a tool's metadata in a subfolder (drizzle's
+  `meta/_journal.json`) isn't reported.
+- GitHub's compare lists at most 300 files. If it hit that cap, ship adds "…and more, see the
+  compare" with the link.
+- Nothing is printed when there are no migrations, or when the field isn't set. If the compare
+  fails in a deploy, the existing "Could not list the commits going out" warning is the only output.
 
 ### Per-environment settings
 

@@ -7,6 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, pickEnvironment, rollback, status, statusAll } from "./commands.js";
 import { freeze, unfreeze } from "./freeze.js";
+import { doctor } from "./doctor.js";
 import { createGitHubClient } from "./github.js";
 import { assertCheckout, logs, planLogs, spawnTail } from "./logs.js";
 import { parseManifest } from "./manifest.js";
@@ -24,6 +25,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
   ship freeze [product] [env]        block deploys (no env: all) with --reason "…"; rollbacks still work
   ship unfreeze [product] [env]      lift it (no env: everything)
+  ship doctor [product] [env]        check the deploy setup before deploying (exit 1 if something fails)
 
 Options:
   --repo owner/name   a repo not in the product list
@@ -93,7 +95,7 @@ async function main() {
         console.log(HELP);
         return values.help || first === 'help' ? 0 : 2;
     }
-    const known = ['status', 'diff', 'log', 'logs', 'deploy', 'rollback', 'freeze', 'unfreeze'];
+    const known = ['status', 'diff', 'log', 'logs', 'deploy', 'rollback', 'doctor', 'freeze', 'unfreeze'];
     const command = known.includes(first) ? first : 'deploy';
     const args = known.includes(first) ? rest : positionals;
     const { product, environment } = parseTarget(args);
@@ -123,6 +125,8 @@ async function main() {
     }
     const client = createGitHubClient(repo, token);
     current = { repo, client, writesVariables: command === 'freeze' || command === 'unfreeze' };
+    if (command === 'doctor')
+        return doctor(client, repo, { environment, print, style });
     const ctx = await loadContext(client, repo, print, Boolean(token), style);
     if (command === 'status')
         return status(ctx);

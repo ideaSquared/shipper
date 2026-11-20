@@ -21,6 +21,12 @@ components:
 `;
 
 describe('parseManifest', () => {
+  it('reads the optional top-level migrations directories', () => {
+    expect(parseManifest(VALID).migrations).toBeUndefined();
+    expect(parseManifest(`${VALID}migrations: [packages/db/migrations]\n`).migrations).toEqual(['packages/db/migrations']);
+    expect(() => parseManifest(`${VALID}migrations: ''\n`)).toThrow('migrations');
+  });
+
   it('reads a valid manifest and keeps component order', () => {
     const manifest = parseManifest(VALID);
     expect(Object.keys(manifest.components)).toEqual(['api', 'web']);

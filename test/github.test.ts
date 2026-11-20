@@ -97,6 +97,10 @@ describe('createGitHubClient', () => {
         status: 'ahead',
         total_commits: 1,
         html_url: 'https://github.com/acme/app/compare/aaa...bbb',
+        files: [
+          { filename: 'db/0002_new.sql', status: 'added' },
+          { filename: 'db/0003_renamed.sql', status: 'renamed', previous_filename: 'db/old.sql' },
+        ],
         commits: [
           {
             sha: 'bbb',
@@ -110,6 +114,10 @@ describe('createGitHubClient', () => {
     expect(await createGitHubClient('acme/app', 'token', fetch).compare('aaa', 'bbb')).toEqual({
       totalCommits: 1,
       url: 'https://github.com/acme/app/compare/aaa...bbb',
+      files: [
+        { filename: 'db/0002_new.sql', status: 'added' },
+        { filename: 'db/0003_renamed.sql', status: 'renamed', previousFilename: 'db/old.sql' },
+      ],
       commits: [{ sha: 'bbb', message: 'fix: thing (#3)', author: 'Octo Cat', url: 'https://github.com/acme/app/commit/bbb' }],
     });
   });
@@ -312,5 +320,29 @@ describe('createGitHubClient', () => {
     const github = createGitHubClient('acme/app', 'token', fetchImpl);
     await expect(github.deleteVariable('SHIP_FREEZE')).resolves.toBeUndefined();
     await expect(github.deleteVariable('GONE')).resolves.toBeUndefined();
+  });
+});
+
+describe('environments', () => {
+  it('says which environments have a required-reviewers rule, across pages', async () => {
+    const { fetch } = fakeFetch({
+      '/environments?per_page=100': {
+        environments: [
+          { name: 'production', protection_rules: [{ type: 'wait_timer' }, { type: 'required_reviewers' }] },
+          { name: 'staging' },
+        ],
+      },
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.environments()).toEqual([
+      { name: 'production', requiredReviewers: true },
+      { name: 'staging', requiredReviewers: false },
+    ]);
+  });
+
+  it('reports a refused read as an access error', async () => {
+    const fetch403: typeof fetch = async () => new Response('{"message":"Must have admin rights"}', { status: 403 });
+    const github = createGitHubClient('acme/app', 'token', fetch403);
+    await expect(github.environments()).rejects.toSatisfy(isAccessError);
   });
 });
