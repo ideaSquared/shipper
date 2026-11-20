@@ -21,6 +21,7 @@ ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
 ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
+ship doctor gaminginit-bot [production]    # check the deploy setup before anyone deploys
 ```
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
@@ -37,6 +38,16 @@ ship rollback gaminginit-bot production    # put back the commit that was live b
   you can't read, it says to ask an org admin. Naming the owner grants nothing: access comes from
   the team's write access to the repo, and the `production` environment's required reviewers.
 - The environment is optional when `ship.yaml` has only one.
+- `ship doctor [product] [env]` finds setup mistakes with a command instead of a failed deploy. It
+  prints one line per check (✅ pass, ⚠️ warning, ❌ failure, with a fix hint on the last two) and
+  exits 1 if any check failed. With an environment, only that environment's checks run. It checks:
+  `ship.yaml` exists on the default branch and parses; the `dispatch` and rollback workflow files exist;
+  each environment exists as a GitHub Environment; `production` and any environment with `requires`
+  has required reviewers (⚠️); CODEOWNERS has a `*` line (⚠️); each `checks:` name is a check run on
+  the default branch head (a typo there blocks every deploy); and each absolute `https://` health URL
+  answers (any HTTP status counts; a DNS failure, TLS error or 10s timeout fails). Reading
+  Environments needs admin access: without it that check is one ⚠️ line, not a crash. It does not
+  check Cloudflare Worker secrets, which would need a Cloudflare token.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits

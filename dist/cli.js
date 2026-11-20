@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
+import { doctor } from "./doctor.js";
 import { createGitHubClient } from "./github.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
@@ -17,6 +18,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship deploy [product] [env]        check, confirm, start the deploy and follow it
   ship <env> [product]               same as deploy
   ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
+  ship doctor [product] [env]        check the deploy setup before deploying (exit 1 if something fails)
 
 Options:
   --repo owner/name   a repo not in the product list
@@ -83,7 +85,7 @@ async function main() {
         console.log(HELP);
         return values.help || first === 'help' ? 0 : 2;
     }
-    const known = ['status', 'diff', 'log', 'deploy', 'rollback'];
+    const known = ['status', 'diff', 'log', 'deploy', 'rollback', 'doctor'];
     const command = known.includes(first) ? first : 'deploy';
     const args = known.includes(first) ? rest : positionals;
     const { product, environment } = parseTarget(args);
@@ -105,6 +107,8 @@ async function main() {
         assertShippable(productForRepo(repo));
     const client = createGitHubClient(repo, token);
     current = { repo, client };
+    if (command === 'doctor')
+        return doctor(client, repo, { environment, print, style });
     const ctx = await loadContext(client, repo, print, Boolean(token), style);
     if (command === 'status')
         return status(ctx);
