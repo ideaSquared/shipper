@@ -1,7 +1,8 @@
 # Reusable Discord report, for a repo that deploys with its own workflow: run it after that deploy
 # job with the job's result (see gate.yml for the full pattern). It posts who shipped what, the
-# commit range since the last live commit, and whether the deploy succeeded. It never fails the
-# run: the deploy has already happened.
+# commit range since the last live commit, and whether the deploy succeeded. For a successful deploy
+# it first runs the environment's `smoke:` checks from ship.yaml; a failed smoke check is the only
+# thing that fails this run (the deploy has already happened, so nothing is rolled back).
 name: Ship report
 
 on:

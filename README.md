@@ -96,6 +96,9 @@ dispatch:
    (or, with `expect`, never returns the expected text),
    run `wrangler rollback` to the previous version and fail the deploy. D1 migrations are
    forward-only and are not undone.
+4. **Smoke checks.** If `ship.yaml` has a `smoke:` list for the environment, then once every
+   component has deployed and passed its health check, shipper requests each smoke URL (see
+   [Smoke checks](#smoke-checks)). A failure fails the deploy; it does not roll back.
 
 The deploy job runs in the GitHub Environment named after the target environment, which holds the
 secrets and any required reviewers. Shipper records the GitHub Deployment itself, for the commit it
@@ -232,6 +235,31 @@ components:
 - `build` runs with two extra environment variables: `SHIP_ENVIRONMENT` (the environment being
   deployed, e.g. `staging`) and `SHIP_WRANGLER_ENV` (its `wranglerEnv`, or empty when it has none).
 
+### Smoke checks
+
+Health checks prove one component answers. `smoke:` proves the product works end to end: a record of
+environment name to a list of checks, each a full https URL or `{ url, expect }` (`expect` is a plain
+substring the body must contain, as for `health`). Environment names must exist in `environments`.
+
+```yaml
+smoke:
+  staging:
+    - https://staging.creatrgrid.com/
+    - { url: https://api-staging.creatrgrid.com/api/v1/creators/demo, expect: '"slug":"demo"' }
+```
+
+After every component has deployed and passed its health check, shipper requests each URL for that
+environment (up to 3 attempts, a few seconds apart, 10 second timeout each). A check that still
+fails fails the deploy job and shows in the job summary and the Discord message as a failed `smoke`
+component naming the URL and why (the HTTP status, or the expected text missing). Smoke failures do
+**not** roll back, because they can come from a dependency rather than the release; the message
+suggests `ship rollback <product> <environment>`. Response bodies and the `expect` text are never
+logged, only the status and whether `expect` matched.
+
+For a Cloudflare product, the GitHub Deployment of a smoke-failed release is marked `error`, not
+`success`: an environment that `requires` this one won't take that commit, and `ship rollback` knows
+the release is still running, so it rolls back to the last healthy release. An environment with no `smoke:` entry runs nothing.
+
 ## Using it in a repo
 
 1. Add `ship.yaml` at the repo root.
@@ -310,6 +338,9 @@ jobs:
   records the Deployment for the run's commit, which is what `ship status`, the gate and the
   board read.
 - The report posts the usual Discord message with the commit range since the last live commit.
+- If `ship.yaml` has `smoke:` checks for the environment and the deploy job succeeded, the report job
+  runs them first. A failure is reported as a failed deploy and fails the report job (the only
+  thing that does), but cannot undo the repo's own deploy or its GitHub Deployment status.
 - `ship deploy`, `ship status`, `ship diff` and `ship log` work as for any product;
   `ship rollback` needs the repo's own rollback workflow named in `dispatch.rollbackWorkflow`.
 
