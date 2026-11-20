@@ -72,5 +72,7 @@ jobs:
           SHIP_ROLLBACK: 'false'
           SHIP_REPO_ROOT: ${{ github.workspace }}/app
           GITHUB_TOKEN: ${{ github.token }}
+          # The caller repo's variable (set by `ship freeze`); a reusable workflow's `vars` are the caller's.
+          SHIP_FREEZE: ${{ vars.SHIP_FREEZE }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SHIP_NOTIFY_SECRET: ${{ secrets.SHIP_NOTIFY_SECRET }}

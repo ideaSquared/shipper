@@ -24,6 +24,14 @@ export type GitHubClient = {
   // Records a Deployment of `sha` to the environment and returns its id.
   createDeployment(deployment: NewDeployment): Promise<number>;
   setDeploymentStatus(id: number, status: NewDeploymentStatus): Promise<void>;
+  // An Actions repository variable's value; undefined when it is not set (GitHub answers 404).
+  readVariable(name: string): Promise<string | undefined>;
+  // Creates the variable, or updates it when it exists.
+  writeVariable(name: string, value: string): Promise<void>;
+  // Deletes the variable; one that is already gone is fine.
+  deleteVariable(name: string): Promise<void>;
+  // The GitHub login the token belongs to.
+  currentUser(): Promise<string>;
 };
 
 export type NewDeployment = { sha: string; environment: string; actor: string; production: boolean };
@@ -106,6 +114,8 @@ const RunSchema = z.object({
 });
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
 const CreatedSchema = z.object({ id: z.number() });
+const VariableSchema = z.object({ value: z.string() });
+const UserSchema = z.object({ login: z.string() });
 const JobsSchema = z.object({
   jobs: z.array(
     z.object({
@@ -312,6 +322,35 @@ export function createGitHubClient(repository: string, token: string | undefined
         }),
       });
       CreatedSchema.parse(await response.json());
+    },
+    async readVariable(name) {
+      return get(`/actions/variables/${encodeURIComponent(name)}`, VariableSchema).then(
+        ({ value }) => value,
+        (error: unknown) => {
+          if (error instanceof GitHubApiError && error.status === 404) return undefined;
+          throw error;
+        },
+      );
+    },
+    async writeVariable(name, value) {
+      const base = `${BASE}/repos/${repository}/actions/variables`;
+      await request(`${base}/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ name, value }) }).catch(
+        async (error: unknown) => {
+          if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+          await request(base, { method: 'POST', body: JSON.stringify({ name, value }) });
+        },
+      );
+    },
+    async deleteVariable(name) {
+      await request(`${BASE}/repos/${repository}/actions/variables/${encodeURIComponent(name)}`, { method: 'DELETE' }).catch(
+        (error: unknown) => {
+          if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+        },
+      );
+    },
+    async currentUser() {
+      const response = await request(`${BASE}/user`);
+      return UserSchema.parse(await response.json()).login;
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

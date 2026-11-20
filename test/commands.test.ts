@@ -80,6 +80,10 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     ],
     createDeployment: async () => 1,
     setDeploymentStatus: async () => {},
+    readVariable: async () => undefined,
+    writeVariable: async () => {},
+    deleteVariable: async () => {},
+    currentUser: async () => 'octocat',
   };
   return Object.assign({ ...base, ...overrides }, { dispatched });
 }
@@ -533,3 +537,59 @@ describe('production safety', () => {
   });
 });
 
+
+describe('a freeze', () => {
+  const FROZEN = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
+  const frozen = () => fakeClient({ readVariable: async () => FROZEN });
+
+  it('stops ship deploy before anything is started, with the reason, who and when', async () => {
+    const client = frozen();
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(1);
+    expect(client.dispatched).toEqual([]);
+    expect(lines).toEqual(['❄️  production is frozen. Not deploying.', '   db incident', '   by octocat · 13 Nov, 20:00']);
+  });
+
+  it('does not stop a deploy to an environment it does not cover', async () => {
+    const client = fakeClient({ readVariable: async () => FROZEN.replace('"all"', '["staging"]') });
+    expect(await deploy(context(client).ctx, undefined, options())).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+  });
+
+  it('still lets ship rollback through, and prints it', async () => {
+    const client = fakeClient({
+      readVariable: async () => FROZEN,
+      deployments: async () => [
+        { sha: LIVE, createdAt: '2026-11-13T20:42:50Z', creator: 'o', state: 'success' },
+        { sha: 'dddddddd33333333dddddddd33333333dddddddd', createdAt: '2026-11-13T19:30:00Z', creator: 'o', state: 'inactive' },
+      ],
+    });
+    const { ctx, lines } = context(client);
+    expect(await rollback(ctx, undefined, options())).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines).toContain('❄️  frozen: all environments');
+  });
+
+  it('shows in ship status', async () => {
+    const { ctx, lines } = context(frozen());
+    await status(ctx);
+    expect(lines.slice(-3)).toEqual(['❄️  frozen: all environments', '   db incident', '   by octocat · 13 Nov, 20:00']);
+  });
+
+  it('is not an error to be unable to read it: deploy carries on, with a warning only for real failures', async () => {
+    const denied = fakeClient({ readVariable: async () => Promise.reject(new GitHubApiError('no', 403)) });
+    const { ctx, lines } = context(denied);
+    expect(await deploy(ctx, undefined, options())).toBe(0);
+    expect(lines.some((line) => line.includes('Could not check for a freeze'))).toBe(false);
+
+    const broken = fakeClient({ readVariable: async () => Promise.reject(new GitHubApiError('boom', 500)) });
+    const second = context(broken);
+    expect(await deploy(second.ctx, undefined, options())).toBe(0);
+    expect(second.lines[0]).toContain('Could not check for a freeze');
+  });
+
+  it('refuses a deploy when the variable is garbage rather than guessing', async () => {
+    const client = fakeClient({ readVariable: async () => 'nope' });
+    await expect(deploy(context(client).ctx, undefined, options())).rejects.toThrow('SHIP_FREEZE is not a valid freeze');
+  });
+});

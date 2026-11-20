@@ -1,3 +1,4 @@
+import { freezeFailure, type Freeze } from './freeze.ts';
 import { environmentOf, type Manifest } from './manifest.ts';
 
 export type CheckRun = { name: string; status: string; conclusion: string | null };
@@ -15,6 +16,8 @@ export type GateFacts = {
   // What is live in the target environment, and how this SHA relates to it (GitHub compare status
   // of live...sha: "ahead", "behind", "identical" or "diverged").
   live?: { sha: string; relation: string };
+  // The product's `ship freeze`, if one is set. A rollback is never blocked by it.
+  freeze?: Freeze;
 };
 
 // A commit older than what is live would undo newer work, e.g. when an old CI run is re-run.
@@ -53,6 +56,7 @@ export function evaluateGate(manifest: Manifest, environment: string, facts: Gat
   const short = facts.sha.slice(0, 7);
   const failures = [
     facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
+    facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
     liveFailure(facts, environment),
     ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
     ...env.requires

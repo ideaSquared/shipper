@@ -21,6 +21,8 @@ ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
 ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
+ship freeze gaminginit-bot production --reason "db incident"   # block deploys, with a reason everyone sees
+ship unfreeze gaminginit-bot production    # lift it (no environment: lift everything)
 ```
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
@@ -94,6 +96,32 @@ secrets and any required reviewers. Shipper records the GitHub Deployment itself
 deploys: it creates the Deployment once the in-job stale check passes (a blocked deploy is not a
 deployment), marks it `in_progress`, then `success` (with the first deployed URL) or `failure`. The
 job sets `deployment: false` so GitHub doesn't record a second one for the run's own commit.
+
+## Freezing deploys
+
+`ship freeze [product] [env] --reason "…"` blocks deploys during an incident or a release window;
+`ship unfreeze [product] [env]` lifts it. Leave the environment out to freeze (or unfreeze) all of
+them. Both ask first unless `--yes`. Freezing more adds to an existing freeze (the new reason, login
+and time replace the old ones, which are printed first); unfreezing one environment of an "all"
+freeze keeps the others frozen.
+
+- **Where it lives:** the repo's Actions variable `SHIP_FREEZE`, JSON
+  `{ environments: [...] | "all", reason, by, at }`. Setting it needs a token that may write
+  variables: repo admin, or a fine-grained token with *Variables: read and write*. A 403/404 prints
+  that hint after the usual access one.
+- **CLI:** `ship deploy` and `ship production` refuse a frozen environment with ❄️, the reason, who
+  and when. `ship rollback` still works (an incident often needs one) but prints the freeze.
+  `ship status` shows it, `ship status all` per product. A missing variable is just "not frozen".
+  If your token can't read variables the CLI says nothing and carries on; the gate below still stops
+  the run.
+- **Workflow:** the gate in `deploy.yml` and `gate.yml` refuses a frozen environment (so does the
+  deploy job, in case the freeze lands while a run waits for approval), because the CLI is not the
+  only way to start a deploy. Rollback runs (`rollback: true`) are never blocked, not even by a
+  `SHIP_FREEZE` that can't be parsed; for a deploy, an unparseable value blocks.
+  The workflow reads the variable through the `vars` context, which in a reusable workflow is the
+  **calling repo's** variables, so **no permission needs granting**: `GITHUB_TOKEN` has no
+  variables permission at all, and that is why the gate doesn't read it through the API. It must be
+  a repository (or organization) variable: an environment-scoped one isn't visible to the gate job.
 
 ## Rolling back
 

@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from './commands.ts';
+import { freeze, unfreeze } from './freeze.ts';
 import { createGitHubClient } from './github.ts';
 import { GitHubApiError, isAccessError } from './github.ts';
 import {
@@ -29,6 +30,8 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship deploy [product] [env]        check, confirm, start the deploy and follow it
   ship <env> [product]               same as deploy
   ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
+  ship freeze [product] [env]        block deploys (no env: all) with --reason "…"; rollbacks still work
+  ship unfreeze [product] [env]      lift it (no env: everything)
 
 Options:
   --repo owner/name   a repo not in the product list
@@ -36,6 +39,7 @@ Options:
                       for the product name)
   --no-wait           start the deploy and exit
   --redeploy          deploy even if that commit is already live
+  --reason "…"        freeze: why, shown to everyone who tries to deploy
   --to <sha>          rollback: the earlier live commit to put back (7+ characters)
 
 Products (inside a repo's folder the product is optional):
@@ -69,7 +73,7 @@ async function ask(question: string): Promise<string> {
 }
 
 // The repo being worked on, so a GitHub refusal can name its owner.
-let current: { repo: string; client: ReturnType<typeof createGitHubClient> } | undefined;
+let current: { repo: string; client: ReturnType<typeof createGitHubClient>; writesVariables?: boolean } | undefined;
 
 async function ownerOf(client: ReturnType<typeof createGitHubClient>): Promise<string | undefined> {
   for (const path of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
@@ -88,6 +92,7 @@ async function main(): Promise<number> {
       'no-wait': { type: 'boolean', default: false },
       redeploy: { type: 'boolean', default: false },
       to: { type: 'string' },
+      reason: { type: 'string' },
       n: { type: 'string', short: 'n', default: '10' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -98,7 +103,7 @@ async function main(): Promise<number> {
     return values.help || first === 'help' ? 0 : 2;
   }
 
-  const known = ['status', 'diff', 'log', 'deploy', 'rollback'];
+  const known = ['status', 'diff', 'log', 'deploy', 'rollback', 'freeze', 'unfreeze'];
   const command = known.includes(first) ? first : 'deploy';
   const args = known.includes(first) ? rest : positionals;
   const { product, environment } = parseTarget(args);
@@ -121,13 +126,17 @@ async function main(): Promise<number> {
   // refused too. Only an explicit `--repo` bypasses it.
   if ((command === 'deploy' || command === 'rollback') && !values.repo) assertShippable(productForRepo(repo));
   const client = createGitHubClient(repo, token);
-  current = { repo, client };
+  current = { repo, client, writesVariables: command === 'freeze' || command === 'unfreeze' };
   const ctx = await loadContext(client, repo, print, Boolean(token), style);
 
   if (command === 'status') return status(ctx);
   if (command === 'diff') return diff(ctx, environment);
   if (command === 'log') return log(ctx, environment, Number(values.n) || 10);
   const run = { yes: values.yes, wait: !values['no-wait'], confirm, ask, now: () => new Date(), sleep: (ms: number) => sleep(ms) };
+  // "all" is what an omitted environment means.
+  const frozenEnvironment = environment === 'all' ? undefined : environment;
+  if (command === 'freeze') return freeze(ctx, frozenEnvironment, { ...run, reason: values.reason });
+  if (command === 'unfreeze') return unfreeze(ctx, frozenEnvironment, run);
   if (command === 'rollback') return rollback(ctx, environment, { ...run, to: values.to });
   return deploy(ctx, environment, { ...run, redeploy: values.redeploy });
 }
@@ -138,7 +147,10 @@ main().then(
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
     if (error instanceof GitHubApiError && error.rateLimited) console.error(`⏳ ${RATE_LIMIT_HINT}`);
-    else if (current && isAccessError(error)) console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
+    else if (current && isAccessError(error)) {
+      console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
+      if (current.writesVariables) console.error(`   Freezing writes the repo's SHIP_FREEZE Actions variable: it needs repo admin, or a fine-grained token with Variables: read and write.`);
+    }
     process.exit(1);
   },
 );

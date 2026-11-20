@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { deployComponents, renderSummary, type Run } from './cloudflare.ts';
+import { freezeFailure, freezeFromVariable } from './freeze.ts';
 import { evaluateGate, liveFailure, type GateFacts } from './gate.ts';
 import { createGitHubClient, GitHubApiError, type GitHubClient, type NewDeploymentStatus } from './github.ts';
 import { environmentOf, parseManifest, type Manifest } from './manifest.ts';
@@ -27,6 +28,8 @@ const EnvSchema = z.object({
   GITHUB_SERVER_URL: z.string().default('https://github.com'),
   GITHUB_RUN_ID: z.string().default(''),
   GITHUB_TOKEN: z.string().min(1),
+  // `vars.SHIP_FREEZE` of the calling repo, set by `ship freeze`. Empty or missing when not frozen.
+  SHIP_FREEZE: z.string().optional(),
   SHIP_NOTIFY_URL: z.string().optional(),
   SHIP_NOTIFY_SECRET: z.string().optional(),
 });
@@ -151,7 +154,10 @@ async function gate(environment: string): Promise<number> {
     github.deployedTo(env.SHIP_SHA, env.SHIP_ROLLBACK ? [...required, environment] : required),
     env.SHIP_ROLLBACK ? Promise.resolve(undefined) : github.lastSuccessfulDeployment(environment).catch(() => undefined),
   ]);
-  const result = evaluateGate(manifest, environment, {
+  // A rollback is never blocked by a freeze, not even by one that can't be read.
+  const frozen = env.SHIP_ROLLBACK ? {} : freezeFromVariable(env.SHIP_FREEZE);
+  const gated = evaluateGate(manifest, environment, {
+    freeze: frozen.freeze,
     sha: env.SHIP_SHA,
     defaultBranch: env.DEFAULT_BRANCH,
     onDefaultBranch,
@@ -160,6 +166,8 @@ async function gate(environment: string): Promise<number> {
     live: await liveFacts(github, environment, env.SHIP_SHA, liveSha),
     rollback: env.SHIP_ROLLBACK,
   });
+  const failures = [...gated.failures, ...(frozen.failure ? [frozen.failure] : [])];
+  const result = { ok: failures.length === 0, failures };
   if (result.ok) {
     console.log(`Gate passed: ${env.SHIP_SHA.slice(0, 7)} can deploy to ${environment}.`);
     return 0;
@@ -190,6 +198,16 @@ async function deploy(environment: string): Promise<number> {
     annotate('Ship', `Could not read the last deploy to ${environment}: ${String(error)}`, 'warning');
     return undefined;
   });
+
+  // A freeze set while this run waited (for approval or its turn) still stops it. A rollback never is.
+  const frozen = env.SHIP_ROLLBACK ? {} : freezeFromVariable(env.SHIP_FREEZE);
+  const frozenFailure = frozen.failure ?? freezeFailure(frozen.freeze, environment);
+  if (frozenFailure) {
+    annotate('Ship', `${frozenFailure}.`);
+    summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${frozenFailure}\n`);
+    await notify(env, manifest, { environment, outcome: 'blocked', failures: [frozenFailure] });
+    return 1;
+  }
 
   // Checked again here, inside the one-deploy-at-a-time job: a newer commit may have shipped while
   // this run waited, or this may be a re-run of an old run. A rollback instead re-checks its target was live.

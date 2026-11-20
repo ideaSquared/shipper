@@ -1,4 +1,5 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
+import { describeFreeze, freezeFailure, readFreeze } from "./freeze.js";
 import { evaluateGate } from "./gate.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { parseManifest } from "./manifest.js";
@@ -57,6 +58,18 @@ export function pickEnvironment(manifest, named) {
         return only;
     throw new Error(`Name an environment: ${names.join(', ')}.`);
 }
+// The product's freeze. GitHub refusing to say (a token without the Variables permission) is not
+// a reason to stop: the workflow's gate enforces it either way. A malformed value still throws.
+async function freezeOf(ctx) {
+    return readFreeze(ctx.client).catch((error) => {
+        if (!(error instanceof GitHubApiError))
+            throw error;
+        const refused = error.status === 403 || error.status === 404;
+        if (!refused || error.rateLimited)
+            ctx.print(`⚠️  ${ctx.style.warn(`Could not check for a freeze: ${error.message}`)}`);
+        return undefined;
+    });
+}
 export async function status(ctx) {
     const { client, manifest, head, style: s } = ctx;
     ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
@@ -72,6 +85,9 @@ export async function status(ctx) {
         return `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
     }));
     rows.forEach((row) => ctx.print(row));
+    const frozen = await freezeOf(ctx);
+    if (frozen)
+        describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
     return 0;
 }
 // `ship status` with no product: every product, fetched together, printed in list order.
@@ -175,6 +191,12 @@ export async function deploy(ctx, environment, options) {
     }
     if (!ctx.canWrite)
         throw new Error('Deploying needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
+    const frozen = await freezeOf(ctx);
+    if (frozen && freezeFailure(frozen, env)) {
+        ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
+        describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+        return 1;
+    }
     const requires = manifest.environments[env]?.requires ?? [];
     ctx.print(`🔎 ${s.dim(`Checking ${short(head)} can ship to ${env}…`)}`);
     const [checkRuns, deployedTo, live] = await Promise.all([
@@ -327,6 +349,10 @@ export async function rollback(ctx, environment, options) {
     if (!live)
         throw new Error(`${env} has never been deployed, so there is nothing to roll back.`);
     const target = rollbackTarget(deployments, live, env, options.to);
+    // An incident often needs a rollback, so a freeze only gets mentioned.
+    const frozen = await freezeOf(ctx);
+    if (frozen && freezeFailure(frozen, env))
+        describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
     const comparison = await client.compare(target, live).catch((error) => {
         ctx.print(`⚠️  ${s.warn(`Could not list the commits being taken out: ${error instanceof Error ? error.message : String(error)}`)}`);
         return undefined;
