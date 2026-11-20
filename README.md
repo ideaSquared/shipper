@@ -16,7 +16,7 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ```bash
 ship status all                            # every product: what is live, and how far behind its default branch
 ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
-ship diff gaminginit-bot                   # the commits waiting to ship
+ship diff gaminginit-bot                   # the commits waiting to ship (and any new migrations)
 ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
@@ -160,6 +160,7 @@ product: creatrgrid
 discord: creatrgrid              # bot project for the deploy message (optional)
 dispatch: { workflow: deploy.yml, environmentInput: environment }   # for ship deploy (optional)
 checks: [verify, e2e]            # check runs that must pass on the commit (optional)
+migrations: [packages/db/migrations]   # where migration files live, shown by ship diff (optional)
 environments:
   staging:
     wranglerEnv: staging         # passed to wrangler --env (optional)
@@ -179,6 +180,35 @@ components:                      # deployed in this order
 
 Unknown keys are rejected, so a typo fails the deploy instead of being ignored. `cloudflare-worker`
 is the only component type so far.
+
+### Showing pending migrations
+
+The top-level `migrations` lists repo-relative directories that hold migration files. It is
+unrelated to a component's `migrations: { d1: DB }`, which names the D1 binding to apply when
+deploying; this one only makes `ship diff` and the `ship deploy` preview show what is coming.
+
+```yaml
+migrations: [packages/db/migrations]          # one folder
+migrations: [services/*/src/migrations]       # `*` matches one path segment (no other wildcards)
+```
+
+Between the live commit and the one going out, `ship diff` and the deploy preview then print the
+files added directly in those folders:
+
+```
+🗄️  2 migrations going out:
+   packages/db/migrations/0012_add_plans.sql
+   packages/db/migrations/0013_backfill.sql
+```
+
+- A shipped migration that was modified, removed or renamed out of its folder gets a ⚠️ line, since
+  shipped migrations shouldn't change.
+- Only files directly in a listed folder count, so a tool's metadata in a subfolder (drizzle's
+  `meta/_journal.json`) isn't reported.
+- GitHub's compare lists at most 300 files. If it hit that cap, ship adds "…and more, see the
+  compare" with the link.
+- Nothing is printed when there are no migrations, or when the field isn't set. If the compare
+  fails in a deploy, the existing "Could not list the commits going out" warning is the only output.
 
 ### Per-environment settings
 

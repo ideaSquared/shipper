@@ -5,7 +5,10 @@ export type Outcome = 'shipped' | 'rolled-back' | 'failed' | 'blocked';
 
 export type CommitSummary = { sha: string; message: string; author: string; url: string };
 
-export type Comparison = { totalCommits: number; url: string; commits: CommitSummary[] };
+// A file changed between two commits, as GitHub's compare reports it.
+export type ChangedFile = { filename: string; status: string; previousFilename?: string };
+
+export type Comparison = { totalCommits: number; url: string; commits: CommitSummary[]; files?: ChangedFile[] };
 
 // The message the ideaSquared bot turns into a Discord embed (POST /ship).
 export type ShipReport = {

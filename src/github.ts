@@ -83,6 +83,7 @@ const CompareSchema = z.object({
       }),
     )
     .default([]),
+  files: z.array(z.object({ filename: z.string(), status: z.string(), previous_filename: z.string().optional() })).default([]),
 });
 const DeploymentShasSchema = z.array(z.object({ id: z.number(), sha: z.string() }));
 const CheckRunsSchema = z.object({
@@ -220,6 +221,12 @@ export function createGitHubClient(repository: string, token: string | undefined
       return {
         totalCommits: pages[0]?.total_commits ?? commits.length,
         url: pages[0]?.html_url ?? '',
+        // GitHub lists up to 300 files, the same on every page, so the first page has them all.
+        files: (pages[0]?.files ?? []).map(({ filename, status, previous_filename }) => ({
+          filename,
+          status,
+          ...(previous_filename ? { previousFilename: previous_filename } : {}),
+        })),
         commits: commits.map((commit) => ({
           sha: commit.sha,
           message: commit.commit.message.split('\n')[0] ?? '',
