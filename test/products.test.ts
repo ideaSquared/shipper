@@ -5,6 +5,7 @@ import {
   assertShippable,
   ownerFromCodeowners,
   parseTarget,
+  productForRepo,
   repoFromRemote,
   resolveRepo,
 } from '../src/products.ts';
@@ -81,5 +82,13 @@ describe('owners from CODEOWNERS', () => {
       "You may not have access to ideaSquared/creatrgrid. It's owned by @ideaSquared/creatrgrid: ask them for write access.",
     );
     expect(accessHint('ideaSquared/creatrgrid', undefined)).toContain('Ask a GitHub org admin');
+  });
+});
+
+describe('productForRepo', () => {
+  it('finds the product a repo belongs to, ignoring case, so a retired one is caught from its folder', () => {
+    expect(productForRepo('ideasquared/GamingInit')).toBe('gaminginit');
+    expect(() => assertShippable(productForRepo('ideaSquared/gaminginit'))).toThrow('gaminginit is retired');
+    expect(productForRepo('someone/else')).toBeUndefined();
   });
 });

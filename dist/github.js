@@ -167,7 +167,7 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
             if (response.status === 404)
                 return undefined;
             if (!response.ok)
-                throw new Error(`GitHub API /contents/${path} returned ${response.status}`);
+                throw new GitHubApiError(`GitHub API /contents/${path} returned ${response.status}`, response.status);
             const file = ContentSchema.parse(await response.json());
             return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8');
         },
