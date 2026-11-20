@@ -288,6 +288,39 @@ describe('createGitHubClient', () => {
     expect(error).toBeInstanceOf(GitHubApiError);
     expect(error).toMatchObject({ status: 403, message: 'GitHub API /deployments returned 403: Resource not accessible by integration' });
   });
+
+  it('reads a repository variable, and treats a missing one as unset', async () => {
+    const { fetch } = fakeFetch({ '/actions/variables/SHIP_FREEZE': { name: 'SHIP_FREEZE', value: '{}' } });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.readVariable('SHIP_FREEZE')).toBe('{}');
+    expect(await github.readVariable('OTHER')).toBeUndefined();
+  });
+
+  it('writes a variable by updating it, or creating it when it does not exist yet', async () => {
+    const calls: string[] = [];
+    const existing = new Set<string>();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input).replace('https://api.github.com/repos/acme/app', '');
+      calls.push(`${init?.method} ${url}`);
+      if (init?.method === 'PATCH') return new Response(existing.has(url) ? null : '{}', { status: existing.has(url) ? 204 : 404 });
+      return new Response('{}', { status: 201 });
+    };
+    const github = createGitHubClient('acme/app', 'token', fetchImpl);
+    await github.writeVariable('SHIP_FREEZE', 'v');
+    expect(calls).toEqual(['PATCH /actions/variables/SHIP_FREEZE', 'POST /actions/variables']);
+    existing.add('/actions/variables/SHIP_FREEZE');
+    calls.length = 0;
+    await github.writeVariable('SHIP_FREEZE', 'v');
+    expect(calls).toEqual(['PATCH /actions/variables/SHIP_FREEZE']);
+  });
+
+  it('deletes a variable, and is fine when it is already gone', async () => {
+    const fetchImpl: typeof fetch = async (input) =>
+      String(input).endsWith('/GONE') ? new Response('{}', { status: 404 }) : new Response(null, { status: 204 });
+    const github = createGitHubClient('acme/app', 'token', fetchImpl);
+    await expect(github.deleteVariable('SHIP_FREEZE')).resolves.toBeUndefined();
+    await expect(github.deleteVariable('GONE')).resolves.toBeUndefined();
+  });
 });
 
 describe('environments', () => {

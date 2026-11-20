@@ -105,3 +105,21 @@ describe('liveFailure', () => {
     );
   });
 });
+
+describe('evaluateGate with a freeze', () => {
+  const freeze = { environments: ['production'], reason: 'release window', by: 'octocat', at: '2026-11-13T20:00:00Z' };
+
+  it('refuses a frozen environment, naming the reason, who and when', () => {
+    const result = evaluateGate(manifest, 'production', { ...passing, freeze });
+    expect(result.failures).toEqual(['production is frozen by octocat since 2026-11-13T20:00:00Z: release window']);
+  });
+
+  it('lets an environment the freeze does not cover through', () => {
+    expect(evaluateGate(manifest, 'staging', { ...passing, deployedTo: [], freeze }).ok).toBe(true);
+  });
+
+  it('never blocks a rollback', () => {
+    const facts = { ...passing, freeze: { ...freeze, environments: 'all' as const }, rollback: true, deployedTo: ['staging', 'production'] };
+    expect(evaluateGate(manifest, 'production', facts).ok).toBe(true);
+  });
+});

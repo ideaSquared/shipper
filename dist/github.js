@@ -58,6 +58,8 @@ const RunSchema = z.object({
 });
 const RunsSchema = z.object({ workflow_runs: z.array(RunSchema) });
 const CreatedSchema = z.object({ id: z.number() });
+const VariableSchema = z.object({ value: z.string() });
+const UserSchema = z.object({ login: z.string() });
 const JobsSchema = z.object({
     jobs: z.array(z.object({
         name: z.string(),
@@ -253,6 +255,31 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
                 }),
             });
             CreatedSchema.parse(await response.json());
+        },
+        async readVariable(name) {
+            return get(`/actions/variables/${encodeURIComponent(name)}`, VariableSchema).then(({ value }) => value, (error) => {
+                if (error instanceof GitHubApiError && error.status === 404)
+                    return undefined;
+                throw error;
+            });
+        },
+        async writeVariable(name, value) {
+            const base = `${BASE}/repos/${repository}/actions/variables`;
+            await request(`${base}/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ name, value }) }).catch(async (error) => {
+                if (!(error instanceof GitHubApiError && error.status === 404))
+                    throw error;
+                await request(base, { method: 'POST', body: JSON.stringify({ name, value }) });
+            });
+        },
+        async deleteVariable(name) {
+            await request(`${BASE}/repos/${repository}/actions/variables/${encodeURIComponent(name)}`, { method: 'DELETE' }).catch((error) => {
+                if (!(error instanceof GitHubApiError && error.status === 404))
+                    throw error;
+            });
+        },
+        async currentUser() {
+            const response = await request(`${BASE}/user`);
+            return UserSchema.parse(await response.json()).login;
         },
         async environments() {
             return getAll('/environments?per_page=100', EnvironmentsSchema, (page) => page.environments.map((environment) => ({

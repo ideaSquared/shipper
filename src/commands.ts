@@ -1,4 +1,5 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
+import { describeFreeze, freezeFailure, readFreeze, type Freeze } from './freeze.ts';
 import { evaluateGate } from './gate.ts';
 import { GitHubApiError, isAccessError, type DeploymentSummary, type GitHubClient, type JobSummary } from './github.ts';
 import { pendingMigrations } from './migrations.ts';
@@ -103,6 +104,17 @@ export function pickEnvironment(manifest: Manifest, named: string | undefined): 
   throw new Error(`Name an environment: ${names.join(', ')}.`);
 }
 
+// The product's freeze. GitHub refusing to say (a token without the Variables permission) is not
+// a reason to stop: the workflow's gate enforces it either way. A malformed value still throws.
+async function freezeOf(ctx: Context): Promise<Freeze | undefined> {
+  return readFreeze(ctx.client).catch((error: unknown) => {
+    if (!(error instanceof GitHubApiError)) throw error;
+    const refused = error.status === 403 || error.status === 404;
+    if (!refused || error.rateLimited) ctx.print(`⚠️  ${ctx.style.warn(`Could not check for a freeze: ${error.message}`)}`);
+    return undefined;
+  });
+}
+
 export async function status(ctx: Context): Promise<number> {
   const { client, manifest, head, style: s } = ctx;
   ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
@@ -119,6 +131,8 @@ export async function status(ctx: Context): Promise<number> {
     }),
   );
   rows.forEach((row) => ctx.print(row));
+  const frozen = await freezeOf(ctx);
+  if (frozen) describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
   return 0;
 }
 
@@ -250,6 +264,13 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     throw new Error('ship.yaml has no dispatch.workflow, so ship cannot start a deploy. See the shipper README.');
   }
   if (!ctx.canWrite) throw new Error('Deploying needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
+
+  const frozen = await freezeOf(ctx);
+  if (frozen && freezeFailure(frozen, env)) {
+    ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
+    describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+    return 1;
+  }
 
   const requires = manifest.environments[env]?.requires ?? [];
   ctx.print(`🔎 ${s.dim(`Checking ${short(head)} can ship to ${env}…`)}`);
@@ -411,6 +432,13 @@ export async function rollback(ctx: Context, environment: string | undefined, op
   // back), so roll back from it: the last `success` release is then a valid target, not "already live".
   const running = deployments[0]?.state === 'error' ? deployments[0].sha : live;
   const target = rollbackTarget(deployments, running, env, options.to);
+
+  // An incident often needs a rollback, so a freeze only gets mentioned, and an unreadable one never stops it.
+  const frozen = await freezeOf(ctx).catch((error: unknown) => {
+    ctx.print(`⚠️  ${s.warn(`Could not check for a freeze: ${error instanceof Error ? error.message : String(error)}`)}`);
+    return undefined;
+  });
+  if (frozen && freezeFailure(frozen, env)) describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
 
   const comparison = await client.compare(target, running).catch((error: unknown) => {
     ctx.print(`⚠️  ${s.warn(`Could not list the commits being taken out: ${error instanceof Error ? error.message : String(error)}`)}`);
