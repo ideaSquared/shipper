@@ -192,6 +192,13 @@ describe('createGitHubClient', () => {
     expect(await github.readFile('missing.yaml', 'main')).toBeUndefined();
   });
 
+  it('keeps the status when GitHub refuses a file, so the CLI can name the owner', async () => {
+    const fetchImpl: typeof fetch = async () => new Response('{"message":"Forbidden"}', { status: 403 });
+    const read = createGitHubClient('acme/app', 'token', fetchImpl).readFile('ship.yaml', 'main');
+    await expect(read).rejects.toBeInstanceOf(GitHubApiError);
+    await expect(read).rejects.toMatchObject({ status: 403 });
+  });
+
   it('finds the run a dispatch started, ignoring older runs', async () => {
     const run = (id: number, created_at: string) => ({ id, status: 'queued', conclusion: null, html_url: `u${id}`, created_at });
     const { fetch } = fakeFetch({

@@ -31,6 +31,11 @@ export function activeProducts() {
         .filter(([, product]) => !product.retired)
         .map(([name, product]) => [name, product.repo]));
 }
+// The product a repo belongs to (case-insensitive), e.g. when the repo came from the folder's remote.
+export function productForRepo(repo) {
+    const wanted = repo.toLowerCase();
+    return Object.entries(PRODUCTS).find(([, product]) => product.repo.toLowerCase() === wanted)?.[0];
+}
 // Deploys and rollbacks stop here for a retired product. `--repo` (no product name) bypasses this.
 export function assertShippable(name) {
     const retired = name ? PRODUCTS[name]?.retired : undefined;
