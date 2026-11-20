@@ -8,6 +8,7 @@ import { deployComponents, renderSummary } from "./cloudflare.js";
 import { evaluateGate, liveFailure } from "./gate.js";
 import { createGitHubClient, GitHubApiError } from "./github.js";
 import { environmentOf, parseManifest } from "./manifest.js";
+import { runSmoke, smokeAfterDeploy, smokeComponent } from "./smoke.js";
 import { buildReport, outcomeOf, sendReport, shipActor } from "./notify.js";
 const EnvSchema = z.object({
     SHIP_REPO_ROOT: z.string().min(1),
@@ -193,7 +194,7 @@ async function deploy(environment) {
     const deployment = created.id;
     const logUrl = runUrlOf(env);
     await recordStatus(github, deployment, { state: 'in_progress', logUrl });
-    const results = await deployComponents({
+    const deployed = await deployComponents({
         manifest,
         environment,
         sha: env.SHIP_SHA,
@@ -206,6 +207,9 @@ async function deploy(environment) {
         await recordStatus(github, deployment, { state: 'failure', logUrl });
         throw error;
     });
+    // Only once every component deployed and passed its health check.
+    const smoke = await smokeAfterDeploy(manifest, environment, deployed, { fetch, sleep: (ms) => sleep(ms) });
+    const results = smoke ? [...deployed, smoke] : deployed;
     results.forEach((result) => console.log([`${result.name}: ${result.status}`, result.url, result.detail].filter(Boolean).join(' · ')));
     summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.SHIP_SHA, results));
     results
@@ -237,15 +241,23 @@ async function report(environment) {
     });
     // Newest first, so the first live commit that isn't this one is what was live before.
     const previousSha = deployments.find((d) => (d.state === 'success' || d.state === 'inactive') && d.sha !== env.SHIP_SHA)?.sha;
-    const shipped = env.SHIP_OUTCOME === 'success';
+    const deployedOk = env.SHIP_OUTCOME === 'success';
+    const deployComponent = { name: 'deploy', status: deployedOk ? 'deployed' : 'failed', detail: `deploy job: ${env.SHIP_OUTCOME}` };
+    // Smoke checks run only for a successful deploy, before reporting, so a failure shows as a failed deploy.
+    const smoke = deployedOk
+        ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) }))
+        : undefined;
+    if (smoke)
+        annotate('Ship smoke', smoke.detail ?? 'smoke check failed');
     await notify(env, manifest, {
         environment,
-        outcome: shipped ? 'shipped' : 'failed',
+        outcome: deployedOk && !smoke ? 'shipped' : 'failed',
         previousSha,
         comparison: await changesSince(github, previousSha, env.SHIP_SHA),
-        components: [{ name: 'deploy', status: shipped ? 'deployed' : 'failed', detail: `deploy job: ${env.SHIP_OUTCOME}` }],
+        components: smoke ? [deployComponent, smoke] : [deployComponent],
     });
-    return 0;
+    // The deploy already happened, so only a failed smoke check turns this job red.
+    return smoke ? 1 : 0;
 }
 const COMMANDS = { gate, deploy, report };
 const [command, environment] = process.argv.slice(2);

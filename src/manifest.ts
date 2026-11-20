@@ -23,6 +23,16 @@ const HealthCheckSchema = z.union([
   }),
 ]);
 
+// A smoke check: a full https URL, or { url, expect } with the same substring semantics as a health check.
+const SmokeCheckSchema = z.union([
+  z.string().regex(/^https:\/\/\S+$/, 'must be a full https URL'),
+  z.strictObject({
+    url: z.string().regex(/^https:\/\/\S+$/, 'must be a full https URL'),
+    // Plain substring the response body must contain. Never logged.
+    expect: z.string().min(1).optional(),
+  }),
+]);
+
 const CloudflareWorkerSchema = z.strictObject({
   type: z.literal('cloudflare-worker'),
   // Directory holding the component's wrangler config, relative to the repo root.
@@ -66,6 +76,9 @@ export const ManifestSchema = z
         rollbackWorkflow: z.string().min(1).optional(),
       })
       .optional(),
+    // Post-deploy smoke checks per environment, requested once after every component deployed and passed its
+    // health check. A failure fails the deploy but does not roll back.
+    smoke: z.record(z.string(), z.array(SmokeCheckSchema)).optional(),
     // Deployed in the order written; a failure stops the rest.
     components: z.record(z.string().regex(NAME), ComponentSchema),
   })
@@ -87,6 +100,9 @@ export const ManifestSchema = z
           }),
         ),
     );
+    Object.keys(manifest.smoke ?? {})
+      .filter((env) => !(env in manifest.environments))
+      .forEach((env) => ctx.addIssue({ code: 'custom', path: ['smoke', env], message: `unknown environment '${env}'` }));
     Object.entries(manifest.components).forEach(([name, component]) =>
       Object.keys(component.type === 'cloudflare-worker' && typeof component.health === 'object' ? component.health : {})
         .filter((env) => !(env in manifest.environments))
