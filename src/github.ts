@@ -37,11 +37,31 @@ export type NewDeploymentStatus = {
 // A GitHub API call that did not succeed, with its HTTP status so callers can explain 403s and 404s.
 export class GitHubApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** GitHub refused because the API rate limit is used up, not because of access. */
+  readonly rateLimited: boolean;
+  constructor(message: string, status: number, rateLimited = false) {
     super(message);
     this.name = 'GitHubApiError';
     this.status = status;
+    this.rateLimited = rateLimited;
   }
+}
+
+// GitHub answers a spent rate limit with 403 (or 429), so the status alone can't tell it from no access.
+async function apiError(response: Response, path: string): Promise<GitHubApiError> {
+  const message = await response
+    .json()
+    .then((body: unknown) => (typeof body === 'object' && body && 'message' in body ? String(body.message) : ''))
+    .catch(() => '');
+  const rateLimited =
+    (response.status === 403 || response.status === 429) &&
+    (response.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(message));
+  return new GitHubApiError(`GitHub API ${path} returned ${response.status}${message ? `: ${message}` : ''}`, response.status, rateLimited);
+}
+
+/** A 403/404 that means the caller can't see the repo (a spent rate limit is not one). */
+export function isAccessError(error: unknown): error is GitHubApiError {
+  return error instanceof GitHubApiError && (error.status === 403 || error.status === 404) && !error.rateLimited;
 }
 
 export type DeploymentSummary = { sha: string; createdAt: string; creator: string; state: string };
@@ -121,14 +141,7 @@ export function createGitHubClient(repository: string, token: string | undefined
         ...(init.body ? { 'content-type': 'application/json' } : {}),
       },
     });
-    if (!response.ok) {
-      const detail = await response
-        .json()
-        .then((body: unknown) => (typeof body === 'object' && body && 'message' in body ? `: ${String(body.message)}` : ''))
-        .catch(() => '');
-      const path = url.replace(`${BASE}/repos/${repository}`, '') || '/';
-      throw new GitHubApiError(`GitHub API ${path} returned ${response.status}${detail}`, response.status);
-    }
+    if (!response.ok) throw await apiError(response, url.replace(`${BASE}/repos/${repository}`, '') || '/');
     return response;
   }
 
@@ -232,7 +245,7 @@ export function createGitHubClient(repository: string, token: string | undefined
         },
       });
       if (response.status === 404) return undefined;
-      if (!response.ok) throw new Error(`GitHub API /contents/${path} returned ${response.status}`);
+      if (!response.ok) throw await apiError(response, `/contents/${path}`);
       const file = ContentSchema.parse(await response.json());
       return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8');
     },

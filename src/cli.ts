@@ -6,8 +6,19 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from './commands.ts';
 import { createGitHubClient } from './github.ts';
-import { GitHubApiError } from './github.ts';
-import { accessHint, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, PRODUCTS, repoFromRemote, resolveRepo } from './products.ts';
+import { GitHubApiError, isAccessError } from './github.ts';
+import {
+  accessHint,
+  RATE_LIMIT_HINT,
+  activeProducts,
+  assertShippable,
+  ownerFromCodeowners,
+  parseTarget,
+  productForRepo,
+  PRODUCTS,
+  repoFromRemote,
+  resolveRepo,
+} from './products.ts';
 import { terminalStyle } from './style.ts';
 
 const HELP = `🚢 ship: deploy ideaSquared products
@@ -105,8 +116,10 @@ async function main(): Promise<number> {
     return statusAll(activeProducts(), (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
   }
 
-  if ((command === 'deploy' || command === 'rollback') && !values.repo) assertShippable(product);
   const repo = resolveRepo(choice);
+  // Checked against the resolved repo, so `ship production` inside a retired product's folder is
+  // refused too. Only an explicit `--repo` bypasses it.
+  if ((command === 'deploy' || command === 'rollback') && !values.repo) assertShippable(productForRepo(repo));
   const client = createGitHubClient(repo, token);
   current = { repo, client };
   const ctx = await loadContext(client, repo, print, Boolean(token), style);
@@ -124,9 +137,8 @@ main().then(
   async (error: unknown) => {
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
-    if (current && error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
-      console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-    }
+    if (error instanceof GitHubApiError && error.rateLimited) console.error(`⏳ ${RATE_LIMIT_HINT}`);
+    else if (current && isAccessError(error)) console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
     process.exit(1);
   },
 );

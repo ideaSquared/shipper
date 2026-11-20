@@ -6,8 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
 import { createGitHubClient } from "./github.js";
-import { GitHubApiError } from "./github.js";
-import { accessHint, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, PRODUCTS, repoFromRemote, resolveRepo } from "./products.js";
+import { GitHubApiError, isAccessError } from "./github.js";
+import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
 import { terminalStyle } from "./style.js";
 const HELP = `🚢 ship: deploy ideaSquared products
 
@@ -98,9 +98,11 @@ async function main() {
     if (command === 'status' && wantsAll) {
         return statusAll(activeProducts(), (repo, out) => loadContext(createGitHubClient(repo, token), repo, out, Boolean(token), style), print, style);
     }
-    if ((command === 'deploy' || command === 'rollback') && !values.repo)
-        assertShippable(product);
     const repo = resolveRepo(choice);
+    // Checked against the resolved repo, so `ship production` inside a retired product's folder is
+    // refused too. Only an explicit `--repo` bypasses it.
+    if ((command === 'deploy' || command === 'rollback') && !values.repo)
+        assertShippable(productForRepo(repo));
     const client = createGitHubClient(repo, token);
     current = { repo, client };
     const ctx = await loadContext(client, repo, print, Boolean(token), style);
@@ -118,8 +120,9 @@ async function main() {
 main().then((code) => process.exit(code), async (error) => {
     const red = terminalStyle(process.stderr).bad;
     console.error(`❌ ${red('ship:')} ${error instanceof Error ? error.message : String(error)}`);
-    if (current && error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
+    if (error instanceof GitHubApiError && error.rateLimited)
+        console.error(`⏳ ${RATE_LIMIT_HINT}`);
+    else if (current && isAccessError(error))
         console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-    }
     process.exit(1);
 });

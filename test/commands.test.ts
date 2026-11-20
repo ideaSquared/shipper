@@ -15,6 +15,7 @@ import {
 } from '../src/commands.ts';
 import { GitHubApiError, type DeploymentSummary, type GitHubClient, type JobSummary, type RunSummary } from '../src/github.ts';
 import { parseManifest } from '../src/manifest.ts';
+import { accessHint, RATE_LIMIT_HINT } from '../src/products.ts';
 import { plain } from '../src/style.ts';
 
 const HEAD = 'cccccccc11111111cccccccc11111111cccccccc';
@@ -310,6 +311,22 @@ describe('deploy', () => {
       '🟡 production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind',
       '',
       '⚠️  missing (acme/missing): acme/missing has no ship.yaml on main',
+    ]);
+  });
+
+  it('hints at access or the rate limit for a product GitHub refuses', async () => {
+    const lines: string[] = [];
+    const load = async (repo: string): Promise<Context> => {
+      if (repo === 'acme/private') throw new GitHubApiError('GitHub API / returned 404: Not Found', 404);
+      throw new GitHubApiError('GitHub API / returned 403: API rate limit exceeded', 403, true);
+    };
+    await statusAll({ secret: 'acme/private', busy: 'acme/busy' }, load, (line) => lines.push(line), plain);
+    expect(lines).toEqual([
+      '⚠️  secret (acme/private): GitHub API / returned 404: Not Found',
+      `   🔑 ${accessHint('acme/private', undefined)}`,
+      '',
+      '⚠️  busy (acme/busy): GitHub API / returned 403: API rate limit exceeded',
+      `   ⏳ ${RATE_LIMIT_HINT}`,
     ]);
   });
 

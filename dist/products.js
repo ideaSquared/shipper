@@ -31,6 +31,11 @@ export function activeProducts() {
         .filter(([, product]) => !product.retired)
         .map(([name, product]) => [name, product.repo]));
 }
+// The product a repo belongs to (case-insensitive), e.g. when the repo came from the folder's remote.
+export function productForRepo(repo) {
+    const wanted = repo.toLowerCase();
+    return Object.entries(PRODUCTS).find(([, product]) => product.repo.toLowerCase() === wanted)?.[0];
+}
 // Deploys and rollbacks stop here for a retired product. `--repo` (no product name) bypasses this.
 export function assertShippable(name) {
     const retired = name ? PRODUCTS[name]?.retired : undefined;
@@ -52,6 +57,7 @@ export function accessHint(repo, owner) {
         ? `You may not have access to ${repo}. It's owned by ${owner}: ask them for write access.`
         : `You may not have access to ${repo}. Ask a GitHub org admin to add you to its team.`;
 }
+export const RATE_LIMIT_HINT = "GitHub's API rate limit is used up. Sign in (`gh auth login` or GH_TOKEN) or try again later.";
 // owner/name from a GitHub remote URL (https or ssh), or undefined for anything else.
 export function repoFromRemote(remote) {
     const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(remote.trim());

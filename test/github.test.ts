@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGitHubClient, GitHubApiError } from '../src/github.ts';
+import { createGitHubClient, GitHubApiError, isAccessError } from '../src/github.ts';
 
 function fakeFetch(routes: Record<string, unknown>): { fetch: typeof fetch; urls: string[] } {
   const urls: string[] = [];
@@ -190,6 +190,27 @@ describe('createGitHubClient', () => {
     const github = createGitHubClient('acme/app', 'token', fetch);
     expect(await github.readFile('ship.yaml', 'main')).toBe('product: x\n');
     expect(await github.readFile('missing.yaml', 'main')).toBeUndefined();
+  });
+
+  it('keeps the status when GitHub refuses a file, so the CLI can name the owner', async () => {
+    const fetchImpl: typeof fetch = async () => new Response('{"message":"Forbidden"}', { status: 403 });
+    const read = createGitHubClient('acme/app', 'token', fetchImpl).readFile('ship.yaml', 'main');
+    await expect(read).rejects.toBeInstanceOf(GitHubApiError);
+    await expect(read).rejects.toMatchObject({ status: 403, rateLimited: false, message: 'GitHub API /contents/ship.yaml returned 403: Forbidden' });
+  });
+
+  it('tells a spent rate limit apart from a refusal', async () => {
+    const limited: typeof fetch = async () =>
+      new Response(JSON.stringify({ message: 'API rate limit exceeded for 1.2.3.4.' }), { status: 403 });
+    const byHeader: typeof fetch = async () =>
+      new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } });
+    const refused: typeof fetch = async () => new Response('{"message":"Forbidden"}', { status: 403 });
+    const read = (fetchImpl: typeof fetch) => createGitHubClient('acme/app', undefined, fetchImpl).readFile('ship.yaml', 'main').catch((error: unknown) => error);
+    const [a, b, c] = await Promise.all([read(limited), read(byHeader), read(refused)]);
+    expect([isAccessError(a), isAccessError(b), isAccessError(c)]).toEqual([false, false, true]);
+    expect(a).toMatchObject({ rateLimited: true });
+    expect(b).toMatchObject({ rateLimited: true });
+    await expect(createGitHubClient('acme/app', undefined, limited).defaultBranch()).rejects.toMatchObject({ rateLimited: true });
   });
 
   it('finds the run a dispatch started, ignoring older runs', async () => {
