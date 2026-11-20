@@ -24,7 +24,11 @@ export type GitHubClient = {
   // Records a Deployment of `sha` to the environment and returns its id.
   createDeployment(deployment: NewDeployment): Promise<number>;
   setDeploymentStatus(id: number, status: NewDeploymentStatus): Promise<void>;
+  // The repo's GitHub Environments. Needs admin access to read.
+  environments(): Promise<EnvironmentSummary[]>;
 };
+
+export type EnvironmentSummary = { name: string; requiredReviewers: boolean };
 
 export type NewDeployment = { sha: string; environment: string; actor: string; production: boolean };
 export type NewDeploymentStatus = {
@@ -117,6 +121,10 @@ const JobsSchema = z.object({
       steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional(),
     }),
   ),
+});
+
+const EnvironmentsSchema = z.object({
+  environments: z.array(z.object({ name: z.string(), protection_rules: z.array(z.object({ type: z.string() })).default([]) })),
 });
 
 const toRun = (run: z.infer<typeof RunSchema>): RunSummary => ({
@@ -320,6 +328,14 @@ export function createGitHubClient(repository: string, token: string | undefined
         }),
       });
       CreatedSchema.parse(await response.json());
+    },
+    async environments() {
+      return getAll('/environments?per_page=100', EnvironmentsSchema, (page) =>
+        page.environments.map((environment) => ({
+          name: environment.name,
+          requiredReviewers: environment.protection_rules.some((rule) => rule.type === 'required_reviewers'),
+        })),
+      );
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

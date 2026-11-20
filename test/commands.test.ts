@@ -80,6 +80,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     ],
     createDeployment: async () => 1,
     setDeploymentStatus: async () => {},
+    environments: async () => [],
   };
   return Object.assign({ ...base, ...overrides }, { dispatched });
 }

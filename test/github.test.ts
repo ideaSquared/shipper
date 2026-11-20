@@ -289,3 +289,27 @@ describe('createGitHubClient', () => {
     expect(error).toMatchObject({ status: 403, message: 'GitHub API /deployments returned 403: Resource not accessible by integration' });
   });
 });
+
+describe('environments', () => {
+  it('says which environments have a required-reviewers rule, across pages', async () => {
+    const { fetch } = fakeFetch({
+      '/environments?per_page=100': {
+        environments: [
+          { name: 'production', protection_rules: [{ type: 'wait_timer' }, { type: 'required_reviewers' }] },
+          { name: 'staging' },
+        ],
+      },
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.environments()).toEqual([
+      { name: 'production', requiredReviewers: true },
+      { name: 'staging', requiredReviewers: false },
+    ]);
+  });
+
+  it('reports a refused read as an access error', async () => {
+    const fetch403: typeof fetch = async () => new Response('{"message":"Must have admin rights"}', { status: 403 });
+    const github = createGitHubClient('acme/app', 'token', fetch403);
+    await expect(github.environments()).rejects.toSatisfy(isAccessError);
+  });
+});

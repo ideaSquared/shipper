@@ -66,6 +66,9 @@ const JobsSchema = z.object({
         steps: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })).optional(),
     })),
 });
+const EnvironmentsSchema = z.object({
+    environments: z.array(z.object({ name: z.string(), protection_rules: z.array(z.object({ type: z.string() })).default([]) })),
+});
 const toRun = (run) => ({
     id: run.id,
     status: run.status,
@@ -250,6 +253,12 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
                 }),
             });
             CreatedSchema.parse(await response.json());
+        },
+        async environments() {
+            return getAll('/environments?per_page=100', EnvironmentsSchema, (page) => page.environments.map((environment) => ({
+                name: environment.name,
+                requiredReviewers: environment.protection_rules.some((rule) => rule.type === 'required_reviewers'),
+            })));
         },
         async deployedTo(sha, environments) {
             const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));
