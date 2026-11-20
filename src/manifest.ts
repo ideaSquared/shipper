@@ -23,11 +23,22 @@ const HealthCheckSchema = z.union([
   }),
 ]);
 
+// Parsed, not just prefix-matched: smoke runs after the release is live, so a typo must fail here instead.
+const isHttpsUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname !== '' && !/\s/.test(value);
+  } catch {
+    return false;
+  }
+};
+const HttpsUrlSchema = z.string().refine(isHttpsUrl, 'must be a full https URL');
+
 // A smoke check: a full https URL, or { url, expect } with the same substring semantics as a health check.
 const SmokeCheckSchema = z.union([
-  z.string().regex(/^https:\/\/\S+$/, 'must be a full https URL'),
+  HttpsUrlSchema,
   z.strictObject({
-    url: z.string().regex(/^https:\/\/\S+$/, 'must be a full https URL'),
+    url: HttpsUrlSchema,
     // Plain substring the response body must contain. Never logged.
     expect: z.string().min(1).optional(),
   }),

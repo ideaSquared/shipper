@@ -246,13 +246,12 @@ async function deploy(environment: string): Promise<number> {
 
   const shipped = results.every((result) => result.status === 'deployed');
   // GitHub's record is what the gate reads next time (requires, stale checks), so failing to write it fails the job.
-  const recorded = await recordStatus(
-    github,
-    deployment,
-    shipped
-      ? { state: 'success', logUrl, environmentUrl: results.find((result) => result.url)?.url }
-      : { state: 'failure', logUrl },
-  );
+  // A smoke failure is `error`, not `failure`: the release is live (nothing rolled back), so `ship rollback`
+  // must treat it as the running release, while `requires` still refuses it (it isn't `success`).
+  const status: NewDeploymentStatus = shipped
+    ? { state: 'success', logUrl, environmentUrl: results.find((result) => result.url)?.url }
+    : { state: smoke ? 'error' : 'failure', logUrl };
+  const recorded = await recordStatus(github, deployment, status);
 
   await notify(env, manifest, {
     environment,
@@ -283,12 +282,14 @@ async function report(environment: string): Promise<number> {
     ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) }))
     : undefined;
   if (smoke) annotate('Ship smoke', smoke.detail ?? 'smoke check failed');
+  const components = smoke ? [deployComponent, smoke] : [deployComponent];
+  summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.SHIP_SHA, components));
   await notify(env, manifest, {
     environment,
     outcome: deployedOk && !smoke ? 'shipped' : 'failed',
     previousSha,
     comparison: await changesSince(github, previousSha, env.SHIP_SHA),
-    components: smoke ? [deployComponent, smoke] : [deployComponent],
+    components,
   });
   // The deploy already happened, so only a failed smoke check turns this job red.
   return smoke ? 1 : 0;

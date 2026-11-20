@@ -10,7 +10,7 @@ async function attemptOnce(check, options) {
     if (!check.expect)
         return undefined;
     const body = await response.text();
-    return body.includes(check.expect) ? undefined : `HTTP ${response.status} but the body did not contain ${JSON.stringify(check.expect)}`;
+    return body.includes(check.expect) ? undefined : `HTTP ${response.status} but the expected text was missing`;
 }
 export async function smokeOne(check, options) {
     const attempts = options.attempts ?? 3;

@@ -34,6 +34,9 @@ describe('smoke manifest', () => {
 
   it('rejects a check that is not a full https URL', () => {
     expect(() => parseManifest(MANIFEST.replace('https://staging.example.com/', '/health'))).toThrow(/full https URL/);
+    ['https://?', 'https://example.com:bad/', 'http://example.com/'].forEach((bad) =>
+      expect(() => parseManifest(MANIFEST.replace('https://staging.example.com/', bad))).toThrow(/full https URL/),
+    );
   });
 });
 
@@ -68,7 +71,8 @@ describe('runSmoke', () => {
     const { fetch: f } = fakeFetch(() => new Response('secret@example.com'));
     const results = await runSmoke(manifest, 'staging', { fetch: f, sleep: noSleep });
     const failed = results.find((r) => !r.ok);
-    expect(failed?.detail).toContain('did not contain "\\"slug\\":\\"demo\\""');
+    expect(failed?.detail).toBe('HTTP 200 but the expected text was missing (3 attempts)');
+    expect(failed?.detail).not.toContain('slug');
     expect(JSON.stringify(results)).not.toContain('secret@example.com');
   });
 

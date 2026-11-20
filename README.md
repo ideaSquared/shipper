@@ -245,8 +245,12 @@ environment (up to 3 attempts, a few seconds apart, 10 second timeout each). A c
 fails fails the deploy job and shows in the job summary and the Discord message as a failed `smoke`
 component naming the URL and why (the HTTP status, or the expected text missing). Smoke failures do
 **not** roll back, because they can come from a dependency rather than the release; the message
-suggests `ship rollback <product> <environment>`. Response bodies are never logged, only the status
-and whether `expect` matched. An environment with no `smoke:` entry runs nothing.
+suggests `ship rollback <product> <environment>`. Response bodies and the `expect` text are never
+logged, only the status and whether `expect` matched.
+
+For a Cloudflare product, the GitHub Deployment of a smoke-failed release is marked `error`, not
+`success`: an environment that `requires` this one won't take that commit, and `ship rollback` knows
+the release is still running, so it rolls back to the last healthy release. An environment with no `smoke:` entry runs nothing.
 
 ## Using it in a repo
 
