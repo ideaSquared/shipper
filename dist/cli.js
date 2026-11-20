@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // ship: deploy any ideaSquared product from any folder. See the README for the commands.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { deploy, diff, loadContext, log, rollback, status, statusAll } from "./commands.js";
+import { deploy, diff, loadContext, log, pickEnvironment, rollback, status, statusAll } from "./commands.js";
 import { freeze, unfreeze } from "./freeze.js";
 import { createGitHubClient } from "./github.js";
+import { assertCheckout, logs, planLogs, spawnTail } from "./logs.js";
+import { parseManifest } from "./manifest.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
 import { terminalStyle } from "./style.js";
@@ -17,6 +20,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship log [product] [env] [-n 10]   recent deploys
   ship deploy [product] [env]        check, confirm, start the deploy and follow it
   ship <env> [product]               same as deploy
+  ship logs [product] [env]          stream live logs of a deployed environment (inside the checkout; --component <name>)
   ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
   ship freeze [product] [env]        block deploys (no env: all) with --reason "…"; rollbacks still work
   ship unfreeze [product] [env]      lift it (no env: everything)
@@ -79,6 +83,7 @@ async function main() {
             redeploy: { type: 'boolean', default: false },
             to: { type: 'string' },
             reason: { type: 'string' },
+            component: { type: 'string' },
             n: { type: 'string', short: 'n', default: '10' },
             help: { type: 'boolean', short: 'h', default: false },
         },
@@ -88,7 +93,7 @@ async function main() {
         console.log(HELP);
         return values.help || first === 'help' ? 0 : 2;
     }
-    const known = ['status', 'diff', 'log', 'deploy', 'rollback', 'freeze', 'unfreeze'];
+    const known = ['status', 'diff', 'log', 'logs', 'deploy', 'rollback', 'freeze', 'unfreeze'];
     const command = known.includes(first) ? first : 'deploy';
     const args = known.includes(first) ? rest : positionals;
     const { product, environment } = parseTarget(args);
@@ -108,6 +113,14 @@ async function main() {
     // refused too. Only an explicit `--repo` bypasses it.
     if ((command === 'deploy' || command === 'rollback') && !values.repo)
         assertShippable(productForRepo(repo));
+    if (command === 'logs') {
+        // Local checkout only: the component's wrangler config is read from disk, not from GitHub.
+        assertCheckout(repo, choice.remote);
+        const root = quiet('git', ['rev-parse', '--show-toplevel']) ?? process.cwd();
+        const manifest = parseManifest(readFileSync(`${root}/ship.yaml`, 'utf8'));
+        const plan = planLogs(manifest, pickEnvironment(manifest, environment), root, values.component);
+        return logs(plan, { spawnTail, print, onStop: (stop) => process.once('SIGINT', stop) });
+    }
     const client = createGitHubClient(repo, token);
     current = { repo, client, writesVariables: command === 'freeze' || command === 'unfreeze' };
     const ctx = await loadContext(client, repo, print, Boolean(token), style);

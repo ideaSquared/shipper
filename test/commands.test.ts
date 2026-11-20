@@ -467,6 +467,19 @@ describe('rollback', () => {
     await expect(rollback(ctx, undefined, options({ to: 'eee' }))).rejects.toThrow('at least 7 characters');
   });
 
+  it('rolls back from a release whose smoke checks failed to the last healthy one', async () => {
+    // LIVE is the last `success`; a newer release went live but failed its smoke checks (`error`).
+    const smokeFailed = async (): Promise<DeploymentSummary[]> => [
+      { sha: 'fffffff0', createdAt: '2026-11-13T21:00:00Z', creator: 'o', state: 'error' },
+      ...(await history()).slice(1),
+    ];
+    const client = fakeClient({ deployments: smokeFailed, compare: takenOut });
+    const { ctx, lines } = context(client);
+    await rollback(ctx, undefined, options({ wait: false }));
+    expect(client.dispatched[0]?.inputs.sha).toBe(LIVE);
+    expect(lines[0]).toContain('live fffffff → aaaaaaa');
+  });
+
   it('uses the rollback workflow named in ship.yaml', async () => {
     const client = fakeClient({ deployments: history, compare: takenOut });
     const { ctx } = context(client, MANIFEST.replace('workflow: ci.yml', 'workflow: ci.yml\n  rollbackWorkflow: undo.yml'));
