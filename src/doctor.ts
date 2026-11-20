@@ -50,7 +50,8 @@ function fetchFailure(error: unknown, timeoutMs: number): string {
   const code = error instanceof Error && error.cause instanceof Error && 'code' in error.cause ? String(error.cause.code) : '';
   if (/^(ENOTFOUND|EAI_AGAIN)/.test(code)) return `domain does not resolve (${code})`;
   if (/CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY/.test(code)) return `bad TLS certificate (${code})`;
-  return code ? `${reason(error)} (${code})` : reason(error);
+  // Never the raw message: fetch's errors can repeat the URL, credentials and query string included.
+  return code ? `request failed (${code})` : 'request failed';
 }
 
 // Absolute https health URLs of the environment, once each. Relative paths have no domain to check.
@@ -65,7 +66,8 @@ async function checkHealth(url: string, environment: string, fetchImpl: typeof f
   const label = `${environment} health ${display(url)}`;
   try {
     // Any HTTP status means the domain resolves and the TLS handshake worked.
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+    // `manual`: a redirect is itself an answer; following it would judge some other host.
+    const response = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     await response.body?.cancel();
     return pass(`${label} answers (${response.status})`);
   } catch (error) {
@@ -102,12 +104,14 @@ async function checkEnvironments(client: GitHubClient, manifest: Manifest, names
   });
 }
 
+// GitHub uses the first CODEOWNERS it finds in this order and ignores the rest, as `ship` does.
 async function checkCodeowners(client: GitHubClient, branch: string): Promise<CheckResult> {
   const files = await Promise.all(CODEOWNERS_PATHS.map((path) => client.readFile(path, branch)));
-  const owner = files.map((text) => (text === undefined ? undefined : ownerFromCodeowners(text))).find((found) => found !== undefined);
-  return owner
-    ? pass(`CODEOWNERS has a '*' line (${owner})`)
-    : warn("CODEOWNERS has no '*' line with an owner", "Add `* @org/team` to .github/CODEOWNERS so `ship` can say who owns the product");
+  const index = files.findIndex((text) => text !== undefined);
+  const owner = index === -1 ? undefined : ownerFromCodeowners(files[index] ?? '');
+  if (owner) return pass(`CODEOWNERS has a '*' line (${owner})`);
+  const where = index === -1 ? 'No CODEOWNERS file' : `${CODEOWNERS_PATHS[index]} has no '*' line with an owner`;
+  return warn(where, `Add \`* @org/team\` to ${CODEOWNERS_PATHS[index] ?? '.github/CODEOWNERS'} so \`ship\` can say who owns the product`);
 }
 
 async function checkRequiredChecks(client: GitHubClient, manifest: Manifest, head: string): Promise<CheckResult[]> {

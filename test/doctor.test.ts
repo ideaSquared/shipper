@@ -128,6 +128,12 @@ describe('doctor', () => {
     expect(elsewhere.text).toContain("✅ CODEOWNERS has a '*' line (@acme/team)");
   });
 
+  it('reads only the CODEOWNERS file GitHub uses, not a shadowed one', async () => {
+    const shadowed = await run(client({}, { ...FILES, '.github/CODEOWNERS': '/docs @acme/docs\n', CODEOWNERS: '* @acme/team\n' }));
+    expect(shadowed.text).toContain(".github/CODEOWNERS has no '*' line with an owner");
+    expect(shadowed.text).not.toContain('✅ CODEOWNERS');
+  });
+
   it('fails when a required check name never ran on the default branch head', async () => {
     const { code, text } = await run(client({ checkRuns: async () => [{ name: 'tests', status: 'completed', conclusion: 'success' }] }));
     expect(code).toBe(1);
@@ -146,6 +152,29 @@ describe('doctor', () => {
     expect(tls.text).toContain('bad TLS certificate');
     const timeout = await run(client(), { fetch: failing(new DOMException('The operation timed out', 'TimeoutError')), healthTimeoutMs: 10_000 });
     expect(timeout.text).toContain('timed out after 10s');
+  });
+
+  it("never prints a fetch error's own message, which can repeat credentials or the query", async () => {
+    const leaky: typeof fetch = async () => {
+      throw new TypeError('Request cannot be constructed from a URL that includes credentials: https://user:hunter2@example.com/?token=secret');
+    };
+    const { code, text } = await run(client(), { fetch: leaky });
+    expect(code).toBe(1);
+    expect(text).toContain('unreachable: request failed');
+    expect(text).not.toContain('hunter2');
+    expect(text).not.toContain('secret');
+  });
+
+  it('counts a redirect as an answer without following it', async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const { text } = await run(client(), {
+      fetch: async (_input, init) => {
+        inits.push(init);
+        return new Response(null, { status: 301, headers: { location: 'https://elsewhere.example.com/' } });
+      },
+    });
+    expect(inits.every((init) => init?.redirect === 'manual')).toBe(true);
+    expect(text).toContain('answers (301)');
   });
 
   it('only fetches absolute https health URLs, once each, and never prints the query', async () => {
