@@ -21,10 +21,18 @@ ship log gaminginit-bot -n 10              # recent deploys and their state
 ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
 ship production gaminginit-bot             # same as deploy
 ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
+ship logs gaminginit-bot staging           # stream live logs (wrangler tail) of a deployed environment
+ship logs staging --component api          # just one component
 ```
 
 - It runs from any folder. Name a product from `src/products.ts`, pass `--repo owner/name`, or run
   it inside the repo's checkout and leave the product out.
+- `ship logs` runs `wrangler tail --format pretty` for each `cloudflare-worker` component (with
+  `--env <wranglerEnv>` when the environment sets one), in the component's `path`. Run it inside a
+  checkout of the product's repo: it reads `ship.yaml` and the wrangler config from disk. With several
+  components their output is interleaved, each line prefixed `[name]`. Ctrl-C stops them all; `external`
+  components are skipped, and it exits 1 if nothing can be tailed. Auth is wrangler's own
+  (`CLOUDFLARE_API_TOKEN` or `wrangler login`); shipper never prints it.
 - `ship status all` lists every product in `src/products.ts`, from any folder. A bare `ship status`
   does the same outside a product's checkout; inside one (or with `--repo`) it shows only that
   product. A product that can't be read shows as one ⚠️ line.
