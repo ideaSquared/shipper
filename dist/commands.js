@@ -349,8 +349,11 @@ export async function rollback(ctx, environment, options) {
     if (!live)
         throw new Error(`${env} has never been deployed, so there is nothing to roll back.`);
     const target = rollbackTarget(deployments, live, env, options.to);
-    // An incident often needs a rollback, so a freeze only gets mentioned.
-    const frozen = await freezeOf(ctx);
+    // An incident often needs a rollback, so a freeze only gets mentioned, and an unreadable one never stops it.
+    const frozen = await freezeOf(ctx).catch((error) => {
+        ctx.print(`⚠️  ${s.warn(`Could not check for a freeze: ${error instanceof Error ? error.message : String(error)}`)}`);
+        return undefined;
+    });
     if (frozen && freezeFailure(frozen, env))
         describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
     const comparison = await client.compare(target, live).catch((error) => {

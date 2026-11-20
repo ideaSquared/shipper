@@ -588,6 +588,20 @@ describe('a freeze', () => {
     expect(second.lines[0]).toContain('Could not check for a freeze');
   });
 
+  it('never lets a garbage variable stop a rollback', async () => {
+    const client = fakeClient({
+      readVariable: async () => 'nope',
+      deployments: async () => [
+        { sha: LIVE, createdAt: '2026-11-13T20:42:50Z', creator: 'o', state: 'success' },
+        { sha: 'dddddddd33333333dddddddd33333333dddddddd', createdAt: '2026-11-13T19:30:00Z', creator: 'o', state: 'inactive' },
+      ],
+    });
+    const { ctx, lines } = context(client);
+    expect(await rollback(ctx, undefined, options())).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines[0]).toContain('Could not check for a freeze: SHIP_FREEZE is not a valid freeze');
+  });
+
   it('refuses a deploy when the variable is garbage rather than guessing', async () => {
     const client = fakeClient({ readVariable: async () => 'nope' });
     await expect(deploy(context(client).ctx, undefined, options())).rejects.toThrow('SHIP_FREEZE is not a valid freeze');

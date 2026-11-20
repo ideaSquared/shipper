@@ -78,6 +78,13 @@ describe('freeze', () => {
     expect(lines[0]).toBe('❄️  frozen: production');
   });
 
+  it("keeps a freeze someone added while the prompt was open", async () => {
+    const { client, state, saved } = store();
+    const confirm = async () => ((state.value = JSON.stringify({ ...existing, environments: ['staging'] })), true);
+    await freeze(context(client).ctx, 'production', options({ yes: false, confirm }));
+    expect(saved().environments).toBe('all');
+  });
+
   it('needs a reason', async () => {
     const { client, state } = store();
     await expect(freeze(context(client).ctx, undefined, options({ reason: ' ' }))).rejects.toThrow('A freeze needs a reason');
@@ -121,6 +128,24 @@ describe('unfreeze', () => {
     const { ctx, lines } = context(client);
     expect(await unfreeze(ctx, 'staging', options())).toBe(0);
     expect(lines).toEqual(['✅ staging is not frozen.']);
+  });
+
+  it('keeps an environment someone froze while the prompt was open', async () => {
+    const { client, state, saved } = store(existing);
+    const confirm = async () => ((state.value = JSON.stringify({ ...existing, environments: ['production', 'staging'] })), true);
+    await unfreeze(context(client).ctx, 'production', options({ yes: false, confirm }));
+    expect(saved().environments).toEqual(['staging']);
+  });
+
+  it('removes a malformed value when lifting everything, but not one environment of it', async () => {
+    const { client, state } = store();
+    state.value = 'not json';
+    await expect(unfreeze(context(client).ctx, 'production', options())).rejects.toThrow('SHIP_FREEZE is not a valid freeze');
+    expect(state.value).toBe('not json');
+    const { ctx, lines } = context(client);
+    expect(await unfreeze(ctx, undefined, options())).toBe(0);
+    expect(state.value).toBeUndefined();
+    expect(lines[0]).toContain('SHIP_FREEZE is not a valid freeze, so it blocks every deploy');
   });
 
   it('leaves the freeze alone when not confirmed', async () => {

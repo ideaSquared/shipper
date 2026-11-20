@@ -84,9 +84,12 @@ export async function freeze(ctx, environment, options) {
         ctx.print(`🙅 ${s.dim('Not frozen.')}`);
         return 1;
     }
-    const next = { environments: target, reason: options.reason.trim(), by: await client.currentUser(), at: options.now().toISOString() };
+    // Re-read after the prompt, which can wait a long time, so a change someone made meanwhile is kept.
+    // GitHub variables have no compare-and-set, so this narrows the race to a moment; it can't close it.
+    const current = widen(await readFreeze(client), environment, allEnvironments(ctx));
+    const next = { environments: current, reason: options.reason.trim(), by: await client.currentUser(), at: options.now().toISOString() };
     await client.writeVariable(FREEZE_VARIABLE, JSON.stringify(next));
-    ctx.print(`❄️  ${s.warn(`Deploys to ${label} are frozen.`)} Lift it with ship unfreeze.`);
+    ctx.print(`❄️  ${s.warn(`Deploys to ${current === 'all' ? 'every environment' : current.join(', ')} are frozen.`)} Lift it with ship unfreeze.`);
     return 0;
 }
 export async function unfreeze(ctx, environment, options) {
@@ -94,25 +97,42 @@ export async function unfreeze(ctx, environment, options) {
     if (!ctx.canWrite)
         throw new Error('Unfreezing needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
     checkEnvironment(ctx, environment);
-    const existing = await readFreeze(client);
-    if (!existing || (environment && !isFrozen(existing, environment))) {
+    // A malformed value blocks every deploy, so a plain `ship unfreeze` must be able to remove it.
+    // Lifting one environment needs a readable freeze, to know what stays frozen.
+    const read = await readFreeze(client).then((freeze) => ({ freeze, malformed: false }), (error) => {
+        if (environment || !(error instanceof Error) || !error.message.startsWith(FREEZE_VARIABLE))
+            throw error;
+        return { freeze: undefined, malformed: true };
+    });
+    const existing = read.freeze;
+    if (!read.malformed && (!existing || (environment && !isFrozen(existing, environment)))) {
         ctx.print(`✅ ${environment ? `${s.env(environment)} is` : `${ctx.manifest.product} is`} ${s.ok('not frozen')}.`);
         return 0;
     }
-    describeFreeze(ctx, existing).forEach((line) => ctx.print(line));
-    // Lifting one environment keeps the rest frozen, including out of an "all" freeze.
-    const remaining = environment
-        ? (existing.environments === 'all' ? allEnvironments(ctx) : existing.environments).filter((name) => name !== environment)
-        : [];
+    if (existing)
+        describeFreeze(ctx, existing).forEach((line) => ctx.print(line));
+    else
+        ctx.print(`⚠️  ${s.warn(`${FREEZE_VARIABLE} is not a valid freeze, so it blocks every deploy. Lifting it removes it.`)}`);
     const label = environment ?? 'every environment';
     if (!options.yes && !(await options.confirm(`🔓 Lift the freeze on ${s.env(label)}?`))) {
         ctx.print(`🙅 ${s.dim('Still frozen.')}`);
         return 1;
     }
-    if (remaining.length === 0)
+    if (!environment) {
         await client.deleteVariable(FREEZE_VARIABLE);
-    else
-        await client.writeVariable(FREEZE_VARIABLE, JSON.stringify({ ...existing, environments: remaining }));
+    }
+    else {
+        // Re-read after the prompt so a freeze someone added meanwhile is kept (see freeze()).
+        const latest = await readFreeze(client);
+        // Lifting one environment keeps the rest frozen, including out of an "all" freeze.
+        const remaining = latest
+            ? (latest.environments === 'all' ? allEnvironments(ctx) : latest.environments).filter((name) => name !== environment)
+            : [];
+        if (latest && remaining.length > 0)
+            await client.writeVariable(FREEZE_VARIABLE, JSON.stringify({ ...latest, environments: remaining }));
+        else if (latest)
+            await client.deleteVariable(FREEZE_VARIABLE);
+    }
     ctx.print(`🔓 ${s.ok(`Deploys to ${label} are open again.`)}`);
     return 0;
 }
