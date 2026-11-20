@@ -9,7 +9,8 @@ const escape = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 
 // A directory pattern as a regex over a whole directory path. `*` matches within one path segment.
 function directoryPattern(pattern: string): RegExp {
-  const segments = pattern.replace(/^\.?\/+|\/+$/g, '').split('/');
+  // `.`, `./` and `/` all mean the repo root, whose files have an empty directory.
+  const segments = pattern.replace(/^\.?\/+|\/+$/g, '').replace(/^\.$/, '').split('/');
   return new RegExp(`^${segments.map((segment) => segment.split('*').map(escape).join('[^/]*')).join('/')}$`);
 }
 
