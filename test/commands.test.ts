@@ -312,7 +312,20 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 Checking ccccccc can ship to production…',
       "⛔ Can't ship ccccccc to production:",
-      "   • check 'test' did not pass",
+      "   • check 'test' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.",
+    ]);
+  });
+
+  it('says a deploy is only waiting when every blocker is a check still running', async () => {
+    const client = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }] });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(1);
+    expect(client.dispatched).toEqual([]);
+    expect(lines).toEqual([
+      '🔎 Checking ccccccc can ship to production…',
+      "⏳ ccccccc can't ship to production yet, a check is still running:",
+      "   • check 'test' is still running, not failed. Deploy again once it passes.",
+      '   Nothing is wrong with the commit. Run the same deploy again once it passes.',
     ]);
   });
 
@@ -362,7 +375,7 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 <dim>Checking ccccccc can ship to production…</dim>',
       "⛔ <bad>Can't ship ccccccc to production:</bad>",
-      "   • <bad>check 'test' did not pass</bad>",
+      "   • <bad>check 'test' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.</bad>",
     ]);
   });
 

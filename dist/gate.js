@@ -21,27 +21,31 @@ export function liveFailure(facts, environment) {
         return undefined;
     return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
-function checkFailure(name, runs) {
+function checkVerdict(name, runs) {
     const matching = runs.filter((run) => run.name === name);
-    if (matching.length === 0)
-        return `check '${name}' has not run on this commit`;
+    if (matching.length === 0) {
+        return { failure: `check '${name}' has not run on this commit. Check the commit is on the default branch, then deploy again.` };
+    }
     if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success'))
-        return undefined;
-    if (matching.some((run) => run.status !== 'completed'))
-        return `check '${name}' is still running`;
-    return `check '${name}' did not pass`;
+        return {};
+    if (matching.some((run) => run.status !== 'completed')) {
+        return { failure: `check '${name}' is still running, not failed. Deploy again once it passes.`, waiting: name };
+    }
+    return { failure: `check '${name}' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.` };
 }
 export function evaluateGate(manifest, environment, facts) {
     const env = environmentOf(manifest, environment);
     const short = facts.sha.slice(0, 7);
+    const verdicts = manifest.checks.map((name) => checkVerdict(name, facts.checkRuns));
     const failures = [
         facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
         facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
         liveFailure(facts, environment),
-        ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
+        ...verdicts.map((verdict) => verdict.failure),
         ...env.requires
             .filter((required) => !facts.deployedTo.includes(required))
             .map((required) => `${short} has not been deployed successfully to ${required}`),
     ].filter((failure) => failure !== undefined);
-    return { ok: failures.length === 0, failures };
+    const waiting = verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : []));
+    return { ok: failures.length === 0, failures, waiting };
 }
