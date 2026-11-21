@@ -40,7 +40,7 @@ describe('evaluateGate', () => {
       checkRuns: [{ name: 'verify', status: 'in_progress', conclusion: null }],
     });
     expect(result.failures).toEqual([
-      "check 'verify' is still running, not failed. Deploy again once it passes.",
+      "check 'verify' is still running, so its result is not known yet. Deploy again once it passes.",
       "check 'e2e' has not run on this commit. Check the commit is on the default branch, then deploy again.",
     ]);
     expect(result.waiting).toEqual(['verify']);
@@ -50,7 +50,7 @@ describe('evaluateGate', () => {
       checkRuns: [...passing.checkRuns.slice(1), { name: 'verify', status: 'completed', conclusion: 'failure' }],
     });
     expect(failed.failures).toEqual([
-      "check 'verify' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.",
+      "check 'verify' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.",
     ]);
     expect(failed.waiting).toEqual([]);
   });

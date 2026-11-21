@@ -1,6 +1,6 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { describeFreeze, freezeFailure, readFreeze } from "./freeze.js";
-import { evaluateGate } from "./gate.js";
+import { checkProblems, evaluateGate } from "./gate.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { pendingMigrations } from "./migrations.js";
 import { parseManifest } from "./manifest.js";
@@ -71,6 +71,29 @@ async function freezeOf(ctx) {
         return undefined;
     });
 }
+// Tells the user, before they try a deploy, that the gate would stop it because of a check on head.
+async function warnIfChecksBlock(ctx) {
+    const { client, manifest, head, style: s } = ctx;
+    if (manifest.checks.length === 0)
+        return;
+    const runs = await client.checkRuns(head).catch((error) => {
+        ctx.print(`⚠️  ${s.warn(`Could not check the default branch head: ${error instanceof Error ? error.message : String(error)}`)}`);
+        return undefined;
+    });
+    if (!runs)
+        return;
+    const { failures, waiting } = checkProblems(manifest.checks, runs);
+    if (failures.length === 0)
+        return;
+    if (waiting.length === failures.length) {
+        ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
+        failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
+        ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
+        return;
+    }
+    ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
+    failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
+}
 export async function status(ctx) {
     const { client, manifest, head, style: s } = ctx;
     ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
@@ -78,14 +101,17 @@ export async function status(ctx) {
         const [latest] = (await client.deployments(env, 20)).filter((d) => d.state === 'success' || d.state === 'inactive');
         const name = s.env(env.padEnd(12));
         if (!latest)
-            return `⚪ ${name} ${s.dim('never deployed')}`;
+            return { line: `⚪ ${name} ${s.dim('never deployed')}`, upToDate: false };
         const upToDate = latest.sha === head;
         const behind = upToDate
             ? s.ok('up to date')
             : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
-        return `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
+        const line = `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
+        return { line, upToDate };
     }));
-    rows.forEach((row) => ctx.print(row));
+    rows.forEach((row) => ctx.print(row.line));
+    if (!rows.every((row) => row.upToDate))
+        await warnIfChecksBlock(ctx);
     const frozen = await freezeOf(ctx);
     if (frozen)
         describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
@@ -154,6 +180,7 @@ export async function diff(ctx, environment) {
     printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
     printMigrations(ctx, comparison);
     ctx.print(`🔗 ${s.link(comparison.url)}`);
+    await warnIfChecksBlock(ctx);
     return 0;
 }
 export async function log(ctx, environment, limit) {
@@ -238,7 +265,7 @@ export async function deploy(ctx, environment, options) {
     if (!gate.ok && gate.waiting.length === gate.failures.length) {
         ctx.print(`⏳ ${s.warn(`${short(head)} can't ship to ${env} yet, ${gate.waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
         gate.failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-        ctx.print(`   ${s.dim('Nothing is wrong with the commit. Run the same deploy again once it passes.')}`);
+        ctx.print(`   ${s.dim('Its result is not known yet. Run the same deploy again once it passes.')}`);
         return 1;
     }
     if (!gate.ok) {

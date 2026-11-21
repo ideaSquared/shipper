@@ -41,7 +41,7 @@ export function liveFailure(
   return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
 
-// `waiting` names the checks that are still running: a deploy blocked only by those has not failed.
+// `waiting` names the checks that are still running: a deploy blocked only by those is waiting, not failed or passed.
 export type GateResult = { ok: boolean; failures: string[]; waiting: string[] };
 
 type CheckVerdict = { failure?: string; waiting?: string };
@@ -53,24 +53,31 @@ function checkVerdict(name: string, runs: readonly CheckRun[]): CheckVerdict {
   }
   if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success')) return {};
   if (matching.some((run) => run.status !== 'completed')) {
-    return { failure: `check '${name}' is still running, not failed. Deploy again once it passes.`, waiting: name };
+    return { failure: `check '${name}' is still running, so its result is not known yet. Deploy again once it passes.`, waiting: name };
   }
-  return { failure: `check '${name}' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.` };
+  return { failure: `check '${name}' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.` };
+}
+
+export function checkProblems(names: readonly string[], runs: readonly CheckRun[]): { failures: string[]; waiting: string[] } {
+  const verdicts = names.map((name) => checkVerdict(name, runs));
+  return {
+    failures: verdicts.flatMap((verdict) => (verdict.failure ? [verdict.failure] : [])),
+    waiting: verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : [])),
+  };
 }
 
 export function evaluateGate(manifest: Manifest, environment: string, facts: GateFacts): GateResult {
   const env = environmentOf(manifest, environment);
   const short = facts.sha.slice(0, 7);
-  const verdicts = manifest.checks.map((name) => checkVerdict(name, facts.checkRuns));
+  const checks = checkProblems(manifest.checks, facts.checkRuns);
   const failures = [
     facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
     facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
     liveFailure(facts, environment),
-    ...verdicts.map((verdict) => verdict.failure),
+    ...checks.failures,
     ...env.requires
       .filter((required) => !facts.deployedTo.includes(required))
       .map((required) => `${short} has not been deployed successfully to ${required}`),
   ].filter((failure): failure is string => failure !== undefined);
-  const waiting = verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : []));
-  return { ok: failures.length === 0, failures, waiting };
+  return { ok: failures.length === 0, failures, waiting: checks.waiting };
 }

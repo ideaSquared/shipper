@@ -157,6 +157,58 @@ describe('status', () => {
   });
 });
 
+describe('checks on the default branch head', () => {
+  const running = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }] });
+  const failed = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'failure' }] });
+
+  it('status warns that a deploy would have to wait, before anyone tries one', async () => {
+    const { ctx, lines } = context(running);
+    expect(await status(ctx)).toBe(0);
+    expect(lines.slice(2)).toEqual([
+      "⏳ ccccccc can't ship yet, a check is still running:",
+      "   • check 'test' is still running, so its result is not known yet. Deploy again once it passes.",
+      '   Wait for it before running ship deploy.',
+    ]);
+  });
+
+  it('status warns that a deploy would be blocked by a check that did not pass', async () => {
+    const { ctx, lines } = context(failed);
+    await status(ctx);
+    expect(lines.slice(2)).toEqual([
+      "⛔ ccccccc would be blocked by the gate:",
+      "   • check 'test' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.",
+    ]);
+  });
+
+  it('status stays quiet when the checks passed, or when head is already live', async () => {
+    const passed = context(fakeClient());
+    await status(passed.ctx);
+    expect(passed.lines).toHaveLength(2);
+
+    const live = context(
+      fakeClient({
+        checkRuns: running.checkRuns,
+        deployments: async () => [{ sha: HEAD, createdAt: '2026-11-13T20:42:50Z', creator: 'o', state: 'success' }],
+      }),
+    );
+    await status(live.ctx);
+    expect(live.lines).toHaveLength(2);
+  });
+
+  it('status says so when it cannot read the checks, and still shows what is live', async () => {
+    const { ctx, lines } = context(fakeClient({ checkRuns: async () => { throw new Error('boom'); } }));
+    expect(await status(ctx)).toBe(0);
+    expect(lines[1]).toContain('production');
+    expect(lines[2]).toBe('⚠️  Could not check the default branch head: boom');
+  });
+
+  it('diff warns the same way when there are commits waiting', async () => {
+    const { ctx, lines } = context(running);
+    await diff(ctx, undefined);
+    expect(lines.at(-3)).toBe("⏳ ccccccc can't ship yet, a check is still running:");
+  });
+});
+
 describe('diff', () => {
   it('lists the commits waiting to ship, newest first', async () => {
     const { ctx, lines } = context(fakeClient());
@@ -312,7 +364,7 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 Checking ccccccc can ship to production…',
       "⛔ Can't ship ccccccc to production:",
-      "   • check 'test' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.",
+      "   • check 'test' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.",
     ]);
   });
 
@@ -324,8 +376,8 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 Checking ccccccc can ship to production…',
       "⏳ ccccccc can't ship to production yet, a check is still running:",
-      "   • check 'test' is still running, not failed. Deploy again once it passes.",
-      '   Nothing is wrong with the commit. Run the same deploy again once it passes.',
+      "   • check 'test' is still running, so its result is not known yet. Deploy again once it passes.",
+      '   Its result is not known yet. Run the same deploy again once it passes.',
     ]);
   });
 
@@ -375,7 +427,7 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 <dim>Checking ccccccc can ship to production…</dim>',
       "⛔ <bad>Can't ship ccccccc to production:</bad>",
-      "   • <bad>check 'test' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.</bad>",
+      "   • <bad>check 'test' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.</bad>",
     ]);
   });
 
