@@ -3,7 +3,7 @@
 #   gate:
 #     permissions: { contents: read, checks: read, deployments: read }
 #     uses: ideaSquared/shipper/.github/workflows/gate.yml@<full-commit-sha>  # v1.x
-#     with: { environment: staging }
+#     with: { environment: staging, shipper-ref: <full-commit-sha> }
 #     secrets: inherit
 #   deploy:
 #     needs: gate
