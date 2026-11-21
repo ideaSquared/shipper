@@ -41,27 +41,36 @@ export function liveFailure(
   return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
 
-export type GateResult = { ok: boolean; failures: string[] };
+// `waiting` names the checks that are still running: a deploy blocked only by those has not failed.
+export type GateResult = { ok: boolean; failures: string[]; waiting: string[] };
 
-function checkFailure(name: string, runs: readonly CheckRun[]): string | undefined {
+type CheckVerdict = { failure?: string; waiting?: string };
+
+function checkVerdict(name: string, runs: readonly CheckRun[]): CheckVerdict {
   const matching = runs.filter((run) => run.name === name);
-  if (matching.length === 0) return `check '${name}' has not run on this commit`;
-  if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success')) return undefined;
-  if (matching.some((run) => run.status !== 'completed')) return `check '${name}' is still running`;
-  return `check '${name}' did not pass`;
+  if (matching.length === 0) {
+    return { failure: `check '${name}' has not run on this commit. Check the commit is on the default branch, then deploy again.` };
+  }
+  if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success')) return {};
+  if (matching.some((run) => run.status !== 'completed')) {
+    return { failure: `check '${name}' is still running, not failed. Deploy again once it passes.`, waiting: name };
+  }
+  return { failure: `check '${name}' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.` };
 }
 
 export function evaluateGate(manifest: Manifest, environment: string, facts: GateFacts): GateResult {
   const env = environmentOf(manifest, environment);
   const short = facts.sha.slice(0, 7);
+  const verdicts = manifest.checks.map((name) => checkVerdict(name, facts.checkRuns));
   const failures = [
     facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
     facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
     liveFailure(facts, environment),
-    ...manifest.checks.map((name) => checkFailure(name, facts.checkRuns)),
+    ...verdicts.map((verdict) => verdict.failure),
     ...env.requires
       .filter((required) => !facts.deployedTo.includes(required))
       .map((required) => `${short} has not been deployed successfully to ${required}`),
   ].filter((failure): failure is string => failure !== undefined);
-  return { ok: failures.length === 0, failures };
+  const waiting = verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : []));
+  return { ok: failures.length === 0, failures, waiting };
 }

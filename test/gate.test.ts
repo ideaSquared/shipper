@@ -26,7 +26,7 @@ const passing: GateFacts = {
 
 describe('evaluateGate', () => {
   it('lets a commit through when every rule holds', () => {
-    expect(evaluateGate(manifest, 'production', passing)).toEqual({ ok: true, failures: [] });
+    expect(evaluateGate(manifest, 'production', passing)).toEqual({ ok: true, failures: [], waiting: [] });
   });
 
   it('blocks a commit that is not on the default branch', () => {
@@ -39,13 +39,20 @@ describe('evaluateGate', () => {
       ...passing,
       checkRuns: [{ name: 'verify', status: 'in_progress', conclusion: null }],
     });
-    expect(result.failures).toEqual(["check 'verify' is still running", "check 'e2e' has not run on this commit"]);
+    expect(result.failures).toEqual([
+      "check 'verify' is still running, not failed. Deploy again once it passes.",
+      "check 'e2e' has not run on this commit. Check the commit is on the default branch, then deploy again.",
+    ]);
+    expect(result.waiting).toEqual(['verify']);
 
     const failed = evaluateGate(manifest, 'staging', {
       ...passing,
       checkRuns: [...passing.checkRuns.slice(1), { name: 'verify', status: 'completed', conclusion: 'failure' }],
     });
-    expect(failed.failures).toEqual(["check 'verify' did not pass"]);
+    expect(failed.failures).toEqual([
+      "check 'verify' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.",
+    ]);
+    expect(failed.waiting).toEqual([]);
   });
 
   it('accepts a check that passed on a re-run after an earlier failure', () => {
@@ -83,7 +90,7 @@ describe('evaluateGate', () => {
   it('lets a rollback put back an older commit, but only one that was live on that environment', () => {
     const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
     const older = { ...passing, live: { sha: LIVE, relation: 'behind' }, rollback: true };
-    expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({ ok: true, failures: [] });
+    expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({ ok: true, failures: [], waiting: [] });
     expect(evaluateGate(manifest, 'production', older).failures).toEqual([
       "abcdef1 was never live on production, so it can't be a rollback target",
     ]);
