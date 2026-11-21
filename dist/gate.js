@@ -33,19 +33,25 @@ function checkVerdict(name, runs) {
     }
     return { failure: `check '${name}' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.` };
 }
+export function checkProblems(names, runs) {
+    const verdicts = names.map((name) => checkVerdict(name, runs));
+    return {
+        failures: verdicts.flatMap((verdict) => (verdict.failure ? [verdict.failure] : [])),
+        waiting: verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : [])),
+    };
+}
 export function evaluateGate(manifest, environment, facts) {
     const env = environmentOf(manifest, environment);
     const short = facts.sha.slice(0, 7);
-    const verdicts = manifest.checks.map((name) => checkVerdict(name, facts.checkRuns));
+    const checks = checkProblems(manifest.checks, facts.checkRuns);
     const failures = [
         facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
         facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
         liveFailure(facts, environment),
-        ...verdicts.map((verdict) => verdict.failure),
+        ...checks.failures,
         ...env.requires
             .filter((required) => !facts.deployedTo.includes(required))
             .map((required) => `${short} has not been deployed successfully to ${required}`),
     ].filter((failure) => failure !== undefined);
-    const waiting = verdicts.flatMap((verdict) => (verdict.waiting ? [verdict.waiting] : []));
-    return { ok: failures.length === 0, failures, waiting };
+    return { ok: failures.length === 0, failures, waiting: checks.waiting };
 }

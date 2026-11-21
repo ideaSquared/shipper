@@ -60,6 +60,8 @@ ship logs staging --component api          # just one component
   check Cloudflare Worker secrets, which would need a Cloudflare token.
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
+- `ship status` and `ship diff` warn before you deploy: if a `checks:` check on the default branch head is
+  still running (⏳) or did not pass (⛔), they say so, so you don't find out by starting a deploy.
 - If the only thing blocking `deploy` is a check that is still running, it says so (⏳, not ⛔) and that
   the result is not known yet: run the same deploy again once the check passes.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits
