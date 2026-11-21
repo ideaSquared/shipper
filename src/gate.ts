@@ -53,9 +53,9 @@ function checkVerdict(name: string, runs: readonly CheckRun[]): CheckVerdict {
   }
   if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success')) return {};
   if (matching.some((run) => run.status !== 'completed')) {
-    return { failure: `check '${name}' is still running, not failed. Deploy again once it passes.`, waiting: name };
+    return { failure: `check '${name}' is still running, so its result is not known yet. Deploy again once it passes.`, waiting: name };
   }
-  return { failure: `check '${name}' did not pass. Fix it and ship a new commit; a deploy can't override a failed check.` };
+  return { failure: `check '${name}' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.` };
 }
 
 export function evaluateGate(manifest: Manifest, environment: string, facts: GateFacts): GateResult {

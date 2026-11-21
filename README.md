@@ -61,7 +61,7 @@ ship logs staging --component api          # just one component
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
 - If the only thing blocking `deploy` is a check that is still running, it says so (⏳, not ⛔) and that
-  the commit has not failed: run the same deploy again once the check passes.
+  the result is not known yet: run the same deploy again once the check passes.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits
   going out, asks before it starts (`--yes` skips that), starts the repo's deploy workflow and
   prints each job as it finishes. `--no-wait` starts it and exits. `--redeploy` deploys a commit
