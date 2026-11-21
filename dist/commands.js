@@ -238,7 +238,7 @@ export async function deploy(ctx, environment, options) {
     if (!gate.ok && gate.waiting.length === gate.failures.length) {
         ctx.print(`⏳ ${s.warn(`${short(head)} can't ship to ${env} yet, ${gate.waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
         gate.failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-        ctx.print(`   ${s.dim('Nothing is wrong with the commit. Run the same deploy again once it passes.')}`);
+        ctx.print(`   ${s.dim('Its result is not known yet. Run the same deploy again once it passes.')}`);
         return 1;
     }
     if (!gate.ok) {

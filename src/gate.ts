@@ -41,7 +41,7 @@ export function liveFailure(
   return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
 
-// `waiting` names the checks that are still running: a deploy blocked only by those has not failed.
+// `waiting` names the checks that are still running: a deploy blocked only by those is waiting, not failed or passed.
 export type GateResult = { ok: boolean; failures: string[]; waiting: string[] };
 
 type CheckVerdict = { failure?: string; waiting?: string };
