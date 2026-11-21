@@ -59,7 +59,7 @@ async function confirm(question) {
 }
 async function ask(question) {
     if (!process.stdin.isTTY)
-        throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed in a terminal.');
+        throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = await rl.question(`${question} `);
     rl.close();

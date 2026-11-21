@@ -21,22 +21,27 @@ export type GateFacts = {
 };
 
 // A commit older than what is live would undo newer work, e.g. when an old CI run is re-run.
-export function staleFailure(sha: string, environment: string, live: GateFacts['live']): string | undefined {
+export function staleFailure(sha: string, environment: string, live: GateFacts['live'], product?: string): string | undefined {
   if (!live) return undefined;
   const short = sha.slice(0, 7);
   const liveShort = live.sha.slice(0, 7);
-  if (live.relation === 'behind') return `${short} is older than ${liveShort}, which is live on ${environment}`;
-  if (live.relation === 'diverged') return `${short} is not built on ${liveShort}, which is live on ${environment}`;
+  const rollback = product ? `ship rollback ${product} ${environment}` : 'ship rollback';
+  if (live.relation === 'behind') {
+    return `${short} is older than ${liveShort}, which is live on ${environment}. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ${rollback}.`;
+  }
+  if (live.relation === 'diverged') {
+    return `${short} is not built on ${liveShort}, which is live on ${environment}. Deploy the default branch's latest commit instead.`;
+  }
   return undefined;
 }
 
 // What a deploy may do to what is live: a deploy must not go back in time; a rollback must, but only
 // to a commit that was live in this environment before.
 export function liveFailure(
-  facts: Pick<GateFacts, 'sha' | 'live' | 'deployedTo' | 'rollback'>,
+  facts: Pick<GateFacts, 'sha' | 'live' | 'deployedTo' | 'rollback'> & { product?: string },
   environment: string,
 ): string | undefined {
-  if (!facts.rollback) return staleFailure(facts.sha, environment, facts.live);
+  if (!facts.rollback) return staleFailure(facts.sha, environment, facts.live, facts.product);
   if (facts.deployedTo.includes(environment)) return undefined;
   return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
@@ -71,13 +76,15 @@ export function evaluateGate(manifest: Manifest, environment: string, facts: Gat
   const short = facts.sha.slice(0, 7);
   const checks = checkProblems(manifest.checks, facts.checkRuns);
   const failures = [
-    facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}`,
-    facts.rollback ? undefined : freezeFailure(facts.freeze, environment),
-    liveFailure(facts, environment),
+    facts.onDefaultBranch
+      ? undefined
+      : `${short} is not on ${facts.defaultBranch}. Merge it to ${facts.defaultBranch} first: only the default branch deploys.`,
+    facts.rollback ? undefined : freezeFailure(facts.freeze, environment, manifest.product),
+    liveFailure({ ...facts, product: manifest.product }, environment),
     ...checks.failures,
     ...env.requires
       .filter((required) => !facts.deployedTo.includes(required))
-      .map((required) => `${short} has not been deployed successfully to ${required}`),
+      .map((required) => `${short} has not been deployed successfully to ${required}. Deploy it to ${required} first (ship deploy ${manifest.product} ${required}).`),
   ].filter((failure): failure is string => failure !== undefined);
   return { ok: failures.length === 0, failures, waiting: checks.waiting };
 }

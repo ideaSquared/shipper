@@ -52,6 +52,8 @@ const run: Run = (command, args, cwd, extraEnv = {}) =>
   });
 
 // GitHub workflow commands end at a newline, so encode them.
+const sentence = (text: string): string => (text.endsWith('.') ? text : `${text}.`);
+
 function annotate(title: string, message: string, level: 'error' | 'warning' | 'notice' = 'error'): void {
   const encode = (text: string) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   console.log(`::${level} title=${encode(title)}::${encode(message)}`);
@@ -202,9 +204,9 @@ async function deploy(environment: string): Promise<number> {
 
   // A freeze set while this run waited (for approval or its turn) still stops it. A rollback never is.
   const frozen = env.SHIP_ROLLBACK ? {} : freezeFromVariable(env.SHIP_FREEZE);
-  const frozenFailure = frozen.failure ?? freezeFailure(frozen.freeze, environment);
+  const frozenFailure = frozen.failure ?? freezeFailure(frozen.freeze, environment, manifest.product);
   if (frozenFailure) {
-    annotate('Ship', `${frozenFailure}.`);
+    annotate('Ship', sentence(frozenFailure));
     summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${frozenFailure}\n`);
     await notify(env, manifest, { environment, outcome: 'blocked', failures: [frozenFailure] });
     return 1;
@@ -214,6 +216,7 @@ async function deploy(environment: string): Promise<number> {
   // this run waited, or this may be a re-run of an old run. A rollback instead re-checks its target was live.
   const blocked = liveFailure(
     {
+      product: manifest.product,
       sha: env.SHIP_SHA,
       rollback: env.SHIP_ROLLBACK,
       live: env.SHIP_ROLLBACK ? undefined : await liveFacts(github, environment, env.SHIP_SHA, previousSha),
@@ -222,7 +225,7 @@ async function deploy(environment: string): Promise<number> {
     environment,
   );
   if (blocked) {
-    annotate('Ship', env.SHIP_ROLLBACK ? `${blocked}.` : `${blocked}. Not deploying an older commit over a newer one.`);
+    annotate('Ship', env.SHIP_ROLLBACK ? sentence(blocked) : `${sentence(blocked)} Not deploying an older commit over a newer one.`);
     summarise(env.GITHUB_STEP_SUMMARY, `### Ship blocked for ${environment}\n\n- ${blocked}\n`);
     await notify(env, manifest, { environment, outcome: 'blocked', failures: [blocked] });
     return 1;

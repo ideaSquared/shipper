@@ -346,3 +346,21 @@ describe('environments', () => {
     await expect(github.environments()).rejects.toSatisfy(isAccessError);
   });
 });
+
+describe('secretNames', () => {
+  it('lists the secret names a deploy to an environment can see: repo, environment and organization', async () => {
+    const { fetch } = fakeFetch({
+      '/actions/secrets?per_page=100': { secrets: [{ name: 'REPO_ONE' }] },
+      '/environments/staging/secrets?per_page=100': { secrets: [{ name: 'ENV_ONE' }, { name: 'REPO_ONE' }] },
+      '/actions/organization-secrets?per_page=100': { secrets: [{ name: 'ORG_ONE' }] },
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect((await github.secretNames('staging')).sort()).toEqual(['ENV_ONE', 'ORG_ONE', 'REPO_ONE']);
+  });
+
+  it('reports a refused read as an access error', async () => {
+    const fetch403: typeof fetch = async () => new Response('{"message":"Must have admin rights"}', { status: 403 });
+    const github = createGitHubClient('acme/app', 'token', fetch403);
+    await expect(github.secretNames('staging')).rejects.toSatisfy(isAccessError);
+  });
+});

@@ -115,25 +115,38 @@ async function freezeOf(ctx: Context): Promise<Freeze | undefined> {
   });
 }
 
-// Tells the user, before they try a deploy, that the gate would stop it because of a check on head.
-async function warnIfChecksBlock(ctx: Context): Promise<void> {
+// Tells the user, before they try a deploy, what the gate would stop it for: a check on head that is
+// still running or did not pass, and an environment that only takes commits live somewhere else first.
+async function warnIfBlocked(ctx: Context, environments: readonly string[]): Promise<void> {
   const { client, manifest, head, style: s } = ctx;
-  if (manifest.checks.length === 0) return;
-  const runs = await client.checkRuns(head).catch((error: unknown) => {
-    ctx.print(`⚠️  ${s.warn(`Could not check the default branch head: ${error instanceof Error ? error.message : String(error)}`)}`);
-    return undefined;
-  });
-  if (!runs) return;
-  const { failures, waiting } = checkProblems(manifest.checks, runs);
-  if (failures.length === 0) return;
-  if (waiting.length === failures.length) {
-    ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
-    failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-    ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
-    return;
+  if (manifest.checks.length > 0) {
+    const runs = await client.checkRuns(head).catch((error: unknown) => {
+      ctx.print(`⚠️  ${s.warn(`Could not check the default branch head: ${error instanceof Error ? error.message : String(error)}`)}`);
+      return undefined;
+    });
+    const { failures, waiting } = runs ? checkProblems(manifest.checks, runs) : { failures: [], waiting: [] };
+    if (failures.length > 0 && waiting.length === failures.length) {
+      ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
+      failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
+      ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
+    } else if (failures.length > 0) {
+      ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
+      failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
+    }
   }
-  ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
-  failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
+  await Promise.all(
+    environments.map(async (env) => {
+      const requires = manifest.environments[env]?.requires ?? [];
+      if (requires.length === 0) return;
+      const deployed = await client.deployedTo(head, requires).catch(() => requires);
+      const missing = requires.filter((required) => !deployed.includes(required));
+      const [first] = missing;
+      if (!first) return;
+      ctx.print(
+        `🔗 ${s.warn(`${env} only takes ${short(head)} once it is live on ${missing.join(' and ')}. Run ship deploy ${manifest.product} ${first} first.`)}`,
+      );
+    }),
+  );
 }
 
 export async function status(ctx: Context): Promise<number> {
@@ -141,19 +154,25 @@ export async function status(ctx: Context): Promise<number> {
   ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
   const rows = await Promise.all(
     Object.keys(manifest.environments).map(async (env) => {
-      const [latest] = (await client.deployments(env, 20)).filter((d) => d.state === 'success' || d.state === 'inactive');
+      const recent = await client.deployments(env, 20);
+      const [latest] = recent.filter((d) => d.state === 'success' || d.state === 'inactive');
       const name = s.env(env.padEnd(12));
-      if (!latest) return { line: `⚪ ${name} ${s.dim('never deployed')}`, upToDate: false };
+      // `error` is a release that went live but failed its smoke checks (see main.ts); a newer deploy replaces it.
+      const smokeFailed = recent[0]?.state === 'error'
+        ? [`   ⚠️  ${s.warn(`${short(recent[0].sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
+        : [];
+      if (!latest) return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`, ...smokeFailed], upToDate: false };
       const upToDate = latest.sha === head;
       const behind = upToDate
         ? s.ok('up to date')
         : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
       const line = `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
-      return { line, upToDate };
+      return { env, lines: [line, ...smokeFailed], upToDate };
     }),
   );
-  rows.forEach((row) => ctx.print(row.line));
-  if (!rows.every((row) => row.upToDate)) await warnIfChecksBlock(ctx);
+  rows.forEach((row) => row.lines.forEach((line) => ctx.print(line)));
+  const behind = rows.filter((row) => !row.upToDate).map((row) => row.env);
+  if (behind.length > 0) await warnIfBlocked(ctx, behind);
   const frozen = await freezeOf(ctx);
   if (frozen) describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
   return 0;
@@ -228,7 +247,12 @@ export async function diff(ctx: Context, environment: string | undefined): Promi
   printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
   printMigrations(ctx, comparison);
   ctx.print(`🔗 ${s.link(comparison.url)}`);
-  await warnIfChecksBlock(ctx);
+  await warnIfBlocked(ctx, [env]);
+  const frozen = await freezeOf(ctx);
+  if (frozen && freezeFailure(frozen, env)) {
+    describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
+    ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${ctx.manifest.product} ${env} when it is safe.`)}`);
+  }
   return 0;
 }
 
@@ -293,6 +317,7 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
   if (frozen && freezeFailure(frozen, env)) {
     ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
     describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+    ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${manifest.product} ${env} when it is safe.`)}`);
     return 1;
   }
 
@@ -405,6 +430,14 @@ async function followRun(ctx: Context, workflow: string, since: Date, options: F
     const next = new Map(jobs.map((job) => [job.name, `${job.conclusion ?? job.status}\u0000${currentStep(job) ?? ''}`]));
     if (run.status !== 'completed') return follow(next, lines.length > 0 || heartbeat ? now : quietSince);
     const took = s.dim(`(${formatDuration(now - begun)})`);
+    if (run.conclusion !== 'success') {
+      jobs
+        .filter((job) => job.conclusion === 'failure')
+        .forEach((job) => {
+          const step = job.steps?.find((candidate) => candidate.conclusion === 'failure');
+          ctx.print(`   ❌ ${s.bad(step ? `${job.name} › ${step.name}` : job.name)}`);
+        });
+    }
     ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
     return run.conclusion === 'success' ? 0 : 1;
   };

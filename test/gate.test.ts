@@ -31,7 +31,7 @@ describe('evaluateGate', () => {
 
   it('blocks a commit that is not on the default branch', () => {
     const result = evaluateGate(manifest, 'staging', { ...passing, onDefaultBranch: false });
-    expect(result.failures).toEqual(['abcdef1 is not on main']);
+    expect(result.failures).toEqual(['abcdef1 is not on main. Merge it to main first: only the default branch deploys.']);
   });
 
   it('explains missing, running and failed checks separately', () => {
@@ -68,7 +68,7 @@ describe('evaluateGate', () => {
 
   it('only sends production a commit that is already live on staging', () => {
     const result = evaluateGate(manifest, 'production', { ...passing, deployedTo: [] });
-    expect(result.failures).toEqual(['abcdef1 has not been deployed successfully to staging']);
+    expect(result.failures).toEqual(['abcdef1 has not been deployed successfully to staging. Deploy it to staging first (ship deploy creatrgrid staging).']);
   });
 
   it('does not ask staging to have been deployed before staging', () => {
@@ -78,10 +78,10 @@ describe('evaluateGate', () => {
   it('blocks a commit older than, or not built on, what is live', () => {
     const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'behind' } }).failures).toEqual([
-      'abcdef1 is older than fedcba9, which is live on staging',
+      'abcdef1 is older than fedcba9, which is live on staging. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ship rollback creatrgrid staging.',
     ]);
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'diverged' } }).failures).toEqual([
-      'abcdef1 is not built on fedcba9, which is live on staging',
+      "abcdef1 is not built on fedcba9, which is live on staging. Deploy the default branch's latest commit instead.",
     ]);
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'ahead' } }).ok).toBe(true);
     expect(evaluateGate(manifest, 'staging', { ...passing, live: { sha: LIVE, relation: 'identical' } }).ok).toBe(true);
@@ -98,14 +98,19 @@ describe('evaluateGate', () => {
 
   it('keeps every other rule for a rollback', () => {
     const result = evaluateGate(manifest, 'production', { ...passing, rollback: true, deployedTo: ['production'], onDefaultBranch: false });
-    expect(result.failures).toEqual(['abcdef1 is not on main', 'abcdef1 has not been deployed successfully to staging']);
+    expect(result.failures).toEqual([
+      'abcdef1 is not on main. Merge it to main first: only the default branch deploys.',
+      'abcdef1 has not been deployed successfully to staging. Deploy it to staging first (ship deploy creatrgrid staging).',
+    ]);
   });
 });
 
 describe('liveFailure', () => {
   it('blocks an older commit unless it is a rollback to a commit that was live', () => {
     const live = { sha: 'fedcba9876543210fedcba9876543210fedcba98', relation: 'behind' };
-    expect(liveFailure({ sha: SHA, live, deployedTo: [] }, 'staging')).toBe('abcdef1 is older than fedcba9, which is live on staging');
+    expect(liveFailure({ sha: SHA, live, deployedTo: [] }, 'staging')).toBe(
+      'abcdef1 is older than fedcba9, which is live on staging. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ship rollback.',
+    );
     expect(liveFailure({ sha: SHA, live, deployedTo: ['staging'], rollback: true }, 'staging')).toBeUndefined();
     expect(liveFailure({ sha: SHA, deployedTo: [], rollback: true }, 'staging')).toBe(
       "abcdef1 was never live on staging, so it can't be a rollback target",
@@ -118,7 +123,9 @@ describe('evaluateGate with a freeze', () => {
 
   it('refuses a frozen environment, naming the reason, who and when', () => {
     const result = evaluateGate(manifest, 'production', { ...passing, freeze });
-    expect(result.failures).toEqual(['production is frozen by octocat since 2026-11-13T20:00:00Z: release window']);
+    expect(result.failures).toEqual([
+      'production is frozen by octocat since 2026-11-13T20:00:00Z: release window. Lift it with ship unfreeze creatrgrid production when it is safe.',
+    ]);
   });
 
   it('lets an environment the freeze does not cover through', () => {

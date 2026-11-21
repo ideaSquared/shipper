@@ -71,6 +71,7 @@ const JobsSchema = z.object({
 const EnvironmentsSchema = z.object({
     environments: z.array(z.object({ name: z.string(), protection_rules: z.array(z.object({ type: z.string() })).default([]) })),
 });
+const SecretsSchema = z.object({ secrets: z.array(z.object({ name: z.string() })) });
 const toRun = (run) => ({
     id: run.id,
     status: run.status,
@@ -286,6 +287,15 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
                 name: environment.name,
                 requiredReviewers: environment.protection_rules.some((rule) => rule.type === 'required_reviewers'),
             })));
+        },
+        async secretNames(environment) {
+            const names = (path) => getAll(path, SecretsSchema, (page) => page.secrets.map((secret) => secret.name));
+            const lists = await Promise.all([
+                names('/actions/secrets?per_page=100'),
+                names(`/environments/${encodeURIComponent(environment)}/secrets?per_page=100`),
+                names('/actions/organization-secrets?per_page=100'),
+            ]);
+            return [...new Set(lists.flat())];
         },
         async deployedTo(sha, environments) {
             const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

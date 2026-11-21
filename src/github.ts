@@ -34,6 +34,9 @@ export type GitHubClient = {
   currentUser(): Promise<string>;
   // The repo's GitHub Environments. Needs admin access to read.
   environments(): Promise<EnvironmentSummary[]>;
+  // Names (never values) of the secrets a deploy to the environment can use: repository, environment and
+  // organization secrets. Needs admin access to read.
+  secretNames(environment: string): Promise<string[]>;
 };
 
 export type EnvironmentSummary = { name: string; requiredReviewers: boolean };
@@ -136,6 +139,8 @@ const JobsSchema = z.object({
 const EnvironmentsSchema = z.object({
   environments: z.array(z.object({ name: z.string(), protection_rules: z.array(z.object({ type: z.string() })).default([]) })),
 });
+
+const SecretsSchema = z.object({ secrets: z.array(z.object({ name: z.string() })) });
 
 const toRun = (run: z.infer<typeof RunSchema>): RunSummary => ({
   id: run.id,
@@ -375,6 +380,15 @@ export function createGitHubClient(repository: string, token: string | undefined
           requiredReviewers: environment.protection_rules.some((rule) => rule.type === 'required_reviewers'),
         })),
       );
+    },
+    async secretNames(environment) {
+      const names = (path: string) => getAll(path, SecretsSchema, (page) => page.secrets.map((secret) => secret.name));
+      const lists = await Promise.all([
+        names('/actions/secrets?per_page=100'),
+        names(`/environments/${encodeURIComponent(environment)}/secrets?per_page=100`),
+        names('/actions/organization-secrets?per_page=100'),
+      ]);
+      return [...new Set(lists.flat())];
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));

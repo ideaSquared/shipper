@@ -85,6 +85,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     deleteVariable: async () => {},
     currentUser: async () => 'octocat',
     environments: async () => [],
+    secretNames: async () => [],
   };
   return Object.assign({ ...base, ...overrides }, { dispatched });
 }
@@ -206,6 +207,59 @@ describe('checks on the default branch head', () => {
     const { ctx, lines } = context(running);
     await diff(ctx, undefined);
     expect(lines.at(-3)).toBe("⏳ ccccccc can't ship yet, a check is still running:");
+  });
+});
+
+describe('requires and smoke state, shown before a deploy', () => {
+  const TWO = MANIFEST.replace('production: {}', 'staging: {}\n  production: { requires: [staging] }');
+  const STAGING_LIVE = (state: string): DeploymentSummary[] => [{ sha: LIVE, createdAt: '2026-11-13T20:42:50Z', creator: 'octocat', state }];
+
+  it('status says production needs head live on staging first', async () => {
+    const { ctx, lines } = context(fakeClient(), TWO);
+    await status(ctx);
+    expect(lines.slice(-1)).toEqual([
+      '🔗 production only takes ccccccc once it is live on staging. Run ship deploy gaminginit-bot staging first.',
+    ]);
+  });
+
+  it('status stays quiet about it once head is live on staging', async () => {
+    const { ctx, lines } = context(fakeClient({ deployedTo: async () => ['staging'] }), TWO);
+    await status(ctx);
+    expect(lines.join('\n')).not.toContain('only takes');
+  });
+
+  it('diff says the same for the environment it was asked about', async () => {
+    const { ctx, lines } = context(fakeClient(), TWO);
+    await diff(ctx, 'production');
+    expect(lines.at(-1)).toContain('production only takes ccccccc once it is live on staging');
+  });
+
+  it('diff shows a freeze that would block the deploy', async () => {
+    const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
+    const { ctx, lines } = context(fakeClient({ readVariable: async () => frozen }));
+    await diff(ctx, undefined);
+    expect(lines.slice(-4)).toEqual([
+      '❄️  frozen: all environments',
+      '   db incident',
+      '   by octocat · 13 Nov, 20:00',
+      '   Lift it with ship unfreeze gaminginit-bot production when it is safe.',
+    ]);
+  });
+
+  it('status flags a release that went live but failed its smoke checks', async () => {
+    const { ctx, lines } = context(fakeClient({ deployments: async () => STAGING_LIVE('error') }));
+    await status(ctx);
+    expect(lines).toContain('   ⚠️  aaaaaaa is live but its smoke checks failed. If the release is at fault, run ship rollback gaminginit-bot production.');
+  });
+
+  it('status does not flag it once a later deploy went through', async () => {
+    const later: DeploymentSummary[] = [
+      { sha: HEAD, createdAt: '2026-11-14T20:42:50Z', creator: 'octocat', state: 'success' },
+      ...STAGING_LIVE('error'),
+    ];
+    const { ctx, lines } = context(fakeClient({ deployments: async () => later }));
+    await status(ctx);
+    expect(lines.join('\n')).not.toContain('smoke checks failed');
   });
 });
 
@@ -410,6 +464,27 @@ describe('deploy', () => {
     expect(lines.at(-1)).toBe('💥 Deploy failure: https://run/7 (0s)');
   });
 
+  it('names the job and step that failed, before the link to the run', async () => {
+    const client = fakeClient({
+      run: async () => ({ id: 7, status: 'completed', conclusion: 'failure', url: 'https://run/7', createdAt: '' }),
+      jobs: async () => [
+        { name: 'gate', status: 'completed', conclusion: 'success' },
+        {
+          name: 'deploy / Deploy (production)',
+          status: 'completed',
+          conclusion: 'failure',
+          steps: [
+            { name: 'Checkout', status: 'completed', conclusion: 'success' },
+            { name: 'Deploy to Cloudflare', status: 'completed', conclusion: 'failure' },
+          ],
+        },
+      ],
+    });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(1);
+    expect(lines.slice(-2)).toEqual(['   ❌ deploy / Deploy (production) › Deploy to Cloudflare', '💥 Deploy failure: https://run/7 (0s)']);
+  });
+
   it('needs a dispatch workflow and a token', async () => {
     const noDispatch = context(fakeClient(), MANIFEST.replace(/dispatch:\n {2}workflow: ci.yml\n/, ''));
     await expect(deploy(noDispatch.ctx, undefined, options())).rejects.toThrow('ship.yaml has no dispatch.workflow');
@@ -439,7 +514,7 @@ describe('deploy', () => {
     expect(lines).toEqual([
       '🔎 Checking ccccccc can ship to production…',
       "⛔ Can't ship ccccccc to production:",
-      '   • ccccccc is older than aaaaaaa, which is live on production',
+      '   • ccccccc is older than aaaaaaa, which is live on production. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ship rollback gaminginit-bot production.',
     ]);
   });
 
@@ -723,7 +798,12 @@ describe('a freeze', () => {
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines).toEqual(['❄️  production is frozen. Not deploying.', '   db incident', '   by octocat · 13 Nov, 20:00']);
+    expect(lines).toEqual([
+      '❄️  production is frozen. Not deploying.',
+      '   db incident',
+      '   by octocat · 13 Nov, 20:00',
+      '   Lift it with ship unfreeze gaminginit-bot production when it is safe.',
+    ]);
   });
 
   it('does not stop a deploy to an environment it does not cover', async () => {

@@ -50,6 +50,7 @@ function client(overrides: Partial<GitHubClient> = {}, files: Record<string, str
     headSha: async () => 'abcdef1234567',
     readFile: async (path) => files[path],
     checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'success' }],
+    secretNames: async () => ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'],
     environments: async () => [
       { name: 'staging', requiredReviewers: false },
       { name: 'production', requiredReviewers: true },
@@ -222,5 +223,34 @@ describe('doctor', () => {
     const { code, text } = await run(client(), { environment: 'qa' });
     expect(code).toBe(1);
     expect(text).toContain("environment 'qa' is not in ship.yaml");
+  });
+
+  it('passes when the Cloudflare secrets are set for each environment', async () => {
+    const { code, text } = await run(client());
+    expect(code).toBe(0);
+    expect(text).toContain("✅ 'staging' has CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID");
+    expect(text).toContain("✅ 'production' has CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID");
+  });
+
+  it('fails, before a deploy does, when a Cloudflare secret is missing', async () => {
+    const { code, text } = await run(
+      client({ secretNames: async (environment) => (environment === 'staging' ? ['CLOUDFLARE_ACCOUNT_ID'] : ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) }),
+    );
+    expect(code).toBe(1);
+    expect(text).toContain("❌ 'staging' is missing CLOUDFLARE_API_TOKEN");
+    expect(text).toContain('Settings → Environments → staging');
+    expect(text).toContain('pass secrets: inherit');
+  });
+
+  it('warns, not fails, when it may not read the secrets', async () => {
+    const { code, text } = await run(client({ secretNames: async () => Promise.reject(new GitHubApiError('nope', 403)) }));
+    expect(code).toBe(0);
+    expect(text).toContain("⚠️  can't read secrets: needs admin access");
+  });
+
+  it('does not look for Cloudflare secrets when nothing deploys to Cloudflare', async () => {
+    const external = MANIFEST.replace('type: cloudflare-worker', 'type: external\n    workflow: .github/workflows/deploy.yml');
+    const { text } = await run(client({ secretNames: async () => Promise.reject(new Error('should not be read')) }, { ...FILES, 'ship.yaml': external }));
+    expect(text).not.toContain('CLOUDFLARE');
   });
 });
