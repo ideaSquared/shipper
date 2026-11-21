@@ -26,33 +26,3 @@ jobs:
         run: |
           pnpm build
           git diff --exit-code -- dist || { echo "::error::dist/ is out of date. Run pnpm build and commit it."; exit 1; }
-
-  # Releases each compatible change to every product: product repos (and the deploy workflow's own scripts) use
-  # the v1 tag, so once main is green, v1 moves to it. A breaking change (a `type!:` subject, or a footer line
-  # starting `BREAKING CHANGE:` or `BREAKING-CHANGE:`, in any pushed commit) does not move v1; it needs a new
-  # major tag by hand. Only line starts count, so a message that just mentions breaking changes still releases.
-  release-v1:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: release-v1
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v5
-      - name: Skip a breaking change
-        id: breaking
-        env:
-          COMMITS: ${{ toJSON(github.event.commits) }}
-        run: |
-          if jq -r '.[].message' <<<"$COMMITS" | grep -qE '^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:'; then
-            echo "::warning::A pushed commit is marked breaking, so v1 stays where it is. Release it as a new major tag."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Move v1 to this commit
-        if: steps.breaking.outputs.skip != 'true'
-        run: |
-          git tag -f v1 "$GITHUB_SHA"
-          git push -f origin v1

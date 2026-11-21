@@ -1,0 +1,94 @@
+# Moves the v1 tag. Product repos that still call shipper at @v1 pick up whatever v1 points at, with the
+# Cloudflare token in reach, so v1 moves only here: by hand (Actions > Release > Run workflow), and only
+# after a reviewer approves the `release` GitHub Environment (Settings > Environments > release: required
+# reviewers, ideally limited to the main branch). CI never moves it.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full SHA of the commit to release. Empty releases the head of main.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs before the approval, so a reviewer is only ever asked to approve a commit that is on main, has
+  # green CI and is not marked breaking.
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the commit and check it is on main
+        id: resolve
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          sha="${INPUT_SHA:-$(git rev-parse origin/main)}"
+          if ! grep -qE '^[0-9a-f]{40}$' <<<"$sha"; then
+            echo "::error::sha must be a full 40-character commit SHA (got '$sha')."
+            exit 1
+          fi
+          if ! git cat-file -e "$sha^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$sha is not a commit on main, so it cannot be released."
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check CI passed on it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select(.name == "test" and .conclusion == "success")] | length')
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::CI's test job has not passed on $SHA, so it cannot be released."
+            exit 1
+          fi
+      # A breaking change (a `type!:` subject, or a footer line starting `BREAKING CHANGE:` or
+      # `BREAKING-CHANGE:`, in any commit between v1 and this one) must not move v1; it needs a new major
+      # tag by hand. Only line starts count, so a message that just mentions breaking changes still releases.
+      - name: Refuse a breaking change
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          range="$SHA"
+          if git rev-parse -q --verify refs/tags/v1 >/dev/null; then range="refs/tags/v1..$SHA"; fi
+          if git log --format=%B "$range" | grep -qE '^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:'; then
+            echo "::error::A commit up to $SHA is marked breaking, so v1 stays where it is. Release it as a new major tag by hand."
+            exit 1
+          fi
+
+  release:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    concurrency:
+      group: release-v1
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Move v1 to the commit
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          git tag -f v1 "$SHA"
+          git push -f origin v1
+          echo "v1 now points at $SHA" >> "$GITHUB_STEP_SUMMARY"

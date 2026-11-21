@@ -616,6 +616,9 @@ describe('rollback', () => {
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).toContain('This repo has no .github/workflows/ship-rollback.yml to roll back with');
     expect(String(error)).toContain('      rollback: true');
+    expect(String(error)).toContain('deploy.yml@<full-commit-sha> # v1.x');
+    expect(String(error)).toContain('shipper-ref: <full-commit-sha> # v1.x');
+    expect(String(error)).not.toContain('deploy.yml@v1');
   });
 });
 
