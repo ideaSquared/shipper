@@ -252,6 +252,40 @@ describe('requires and smoke state, shown before a deploy', () => {
     expect(lines).toContain('   ⚠️  aaaaaaa is live but its smoke checks failed. If the release is at fault, run ship rollback gaminginit-bot production.');
   });
 
+  it('status still flags the live release when a newer attempt failed before deploying', async () => {
+    const history: DeploymentSummary[] = [
+      { sha: HEAD, createdAt: '2026-11-15T20:42:50Z', creator: 'octocat', state: 'failure' },
+      { sha: LIVE, createdAt: '2026-11-14T20:42:50Z', creator: 'octocat', state: 'error' },
+      { sha: 'ddddddd0', createdAt: '2026-11-13T20:42:50Z', creator: 'hubot', state: 'success' },
+    ];
+    const { ctx, lines } = context(fakeClient({ deployments: async () => history }));
+    await status(ctx);
+    expect(lines[1]).toContain('aaaaaaa');
+    expect(lines).toContain('   ⚠️  aaaaaaa is live but its smoke checks failed. If the release is at fault, run ship rollback gaminginit-bot production.');
+  });
+
+  it('diff warns about a prerequisite and a freeze for an environment that was never deployed', async () => {
+    const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
+    const { ctx, lines } = context(fakeClient({ deployments: async () => [], lastSuccessfulDeployment: async () => undefined, readVariable: async () => frozen }), TWO);
+    await diff(ctx, 'production');
+    expect(lines.join('\n')).toContain('production only takes ccccccc once it is live on staging');
+    expect(lines.join('\n')).toContain('❄️  frozen: all environments');
+  });
+
+  it('diff still shows a freeze when head is already live, but not check or prerequisite warnings', async () => {
+    const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
+    const client = fakeClient({
+      lastSuccessfulDeployment: async () => HEAD,
+      readVariable: async () => frozen,
+      checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }],
+    });
+    const { ctx, lines } = context(client, TWO);
+    await diff(ctx, 'production');
+    expect(lines.join('\n')).toContain('❄️  frozen: all environments');
+    expect(lines.join('\n')).not.toContain('only takes');
+    expect(lines.join('\n')).not.toContain('still running');
+  });
+
   it('status does not flag it once a later deploy went through', async () => {
     const later: DeploymentSummary[] = [
       { sha: HEAD, createdAt: '2026-11-14T20:42:50Z', creator: 'octocat', state: 'success' },

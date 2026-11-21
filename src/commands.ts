@@ -149,19 +149,28 @@ async function warnIfBlocked(ctx: Context, environments: readonly string[]): Pro
   );
 }
 
+// A freeze on this environment, with the reason and how to lift it.
+async function warnIfFrozen(ctx: Context, env: string): Promise<void> {
+  const frozen = await freezeOf(ctx);
+  if (!frozen || !freezeFailure(frozen, env)) return;
+  describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
+  ctx.print(`   ${ctx.style.dim(`Lift it with ship unfreeze ${ctx.manifest.product} ${env} when it is safe.`)}`);
+}
+
 export async function status(ctx: Context): Promise<number> {
   const { client, manifest, head, style: s } = ctx;
   ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
   const rows = await Promise.all(
     Object.keys(manifest.environments).map(async (env) => {
       const recent = await client.deployments(env, 20);
-      const [latest] = recent.filter((d) => d.state === 'success' || d.state === 'inactive');
+      // The newest record that is live: `error` went live but failed its smoke checks (see main.ts), so a
+      // newer attempt that failed before deploying, or is still pending, doesn't hide it.
+      const latest = recent.find((d) => d.state === 'success' || d.state === 'inactive' || d.state === 'error');
       const name = s.env(env.padEnd(12));
-      // `error` is a release that went live but failed its smoke checks (see main.ts); a newer deploy replaces it.
-      const smokeFailed = recent[0]?.state === 'error'
-        ? [`   ⚠️  ${s.warn(`${short(recent[0].sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
+      const smokeFailed = latest?.state === 'error'
+        ? [`   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
         : [];
-      if (!latest) return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`, ...smokeFailed], upToDate: false };
+      if (!latest) return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`], upToDate: false };
       const upToDate = latest.sha === head;
       const behind = upToDate
         ? s.ok('up to date')
@@ -234,10 +243,14 @@ export async function diff(ctx: Context, environment: string | undefined): Promi
   const live = await ctx.client.lastSuccessfulDeployment(env);
   if (!live) {
     ctx.print(`⚪ ${s.env(env)} has never been deployed. ${ctx.defaultBranch} is at ${s.sha(short(ctx.head))}.`);
+    await warnIfBlocked(ctx, [env]);
+    await warnIfFrozen(ctx, env);
     return 0;
   }
   if (live === ctx.head) {
     ctx.print(`🟢 ${s.env(env)} is ${s.ok('up to date')} at ${s.sha(short(live))}.`);
+    // A freeze still blocks a redeploy; the checks and prerequisites don't matter for a commit that is already live.
+    await warnIfFrozen(ctx, env);
     return 0;
   }
   const comparison = await ctx.client.compare(live, ctx.head);
@@ -248,11 +261,7 @@ export async function diff(ctx: Context, environment: string | undefined): Promi
   printMigrations(ctx, comparison);
   ctx.print(`🔗 ${s.link(comparison.url)}`);
   await warnIfBlocked(ctx, [env]);
-  const frozen = await freezeOf(ctx);
-  if (frozen && freezeFailure(frozen, env)) {
-    describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
-    ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${ctx.manifest.product} ${env} when it is safe.`)}`);
-  }
+  await warnIfFrozen(ctx, env);
   return 0;
 }
 
