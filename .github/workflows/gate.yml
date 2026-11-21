@@ -2,8 +2,8 @@
 #
 #   gate:
 #     permissions: { contents: read, checks: read, deployments: read }
-#     uses: ideaSquared/shipper/.github/workflows/gate.yml@v1
-#     with: { environment: staging }
+#     uses: ideaSquared/shipper/.github/workflows/gate.yml@<full-commit-sha>  # v1.x
+#     with: { environment: staging, shipper-ref: <full-commit-sha> }
 #     secrets: inherit
 #   deploy:
 #     needs: gate
@@ -11,8 +11,8 @@
 #   report:
 #     needs: [gate, deploy]
 #     if: always() && needs.gate.result == 'success'
-#     uses: ideaSquared/shipper/.github/workflows/report.yml@v1
-#     with: { environment: staging, outcome: '${{ needs.deploy.result }}' }
+#     uses: ideaSquared/shipper/.github/workflows/report.yml@<full-commit-sha>  # v1.x
+#     with: { environment: staging, shipper-ref: <full-commit-sha>, outcome: '${{ needs.deploy.result }}' }
 #     secrets: inherit
 #
 # The same rules as deploy.yml's gate: on the default branch, ship.yaml's checks passed, any
@@ -28,7 +28,7 @@ on:
         type: string
         required: true
       shipper-ref:
-        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line.
+        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line. A caller pinned to a commit SHA must pass that same SHA here; the v1 default is for callers still on @v1.
         type: string
         default: v1
 

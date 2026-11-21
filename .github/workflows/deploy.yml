@@ -3,9 +3,10 @@
 #   deploy:
 #     needs: test
 #     permissions: { contents: read, checks: read, deployments: write }
-#     uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
+#     uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha>  # v1.x
 #     with:
 #       environment: production
+#       shipper-ref: <full-commit-sha>   # the same SHA as the uses: line
 #     secrets: inherit
 #
 # `sha` deploys a given commit instead of the run's own; `rollback: true` lets that commit be older
@@ -35,7 +36,7 @@ on:
         type: boolean
         default: false
       shipper-ref:
-        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line.
+        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line. A caller pinned to a commit SHA must pass that same SHA here; the v1 default is for callers still on @v1.
         type: string
         default: v1
 

@@ -170,11 +170,12 @@ on:
 jobs:
   rollback:
     permissions: { contents: read, checks: read, deployments: write }
-    uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
+    uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
     with:
       environment: ${{ inputs.environment }}
       sha: ${{ inputs.sha }}
       rollback: true
+      shipper-ref: <full-commit-sha> # v1.x
     secrets: inherit
 ```
 
@@ -356,9 +357,10 @@ jobs:
       contents: read
       checks: read
       deployments: write           # shipper creates the GitHub Deployment
-    uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1
+    uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
     with:
       environment: production
+      shipper-ref: <full-commit-sha> # v1.x
     secrets: inherit
 ```
 
@@ -386,8 +388,8 @@ components:
 jobs:
   gate:
     permissions: { contents: read, checks: read, deployments: read }
-    uses: ideaSquared/shipper/.github/workflows/gate.yml@v1
-    with: { environment: staging }
+    uses: ideaSquared/shipper/.github/workflows/gate.yml@<full-commit-sha> # v1.x
+    with: { environment: staging, shipper-ref: <full-commit-sha> }
     secrets: inherit
   deploy:
     needs: gate
@@ -397,8 +399,8 @@ jobs:
   report:
     needs: [gate, deploy]
     if: always() && needs.gate.result == 'success'
-    uses: ideaSquared/shipper/.github/workflows/report.yml@v1
-    with: { environment: staging, outcome: '${{ needs.deploy.result }}' }
+    uses: ideaSquared/shipper/.github/workflows/report.yml@<full-commit-sha> # v1.x
+    with: { environment: staging, shipper-ref: <full-commit-sha>, outcome: '${{ needs.deploy.result }}' }
     secrets: inherit
 ```
 
@@ -415,12 +417,29 @@ jobs:
 
 ## Versions
 
-Product repos use the `v1` tag, and the workflow checks out its own scripts at `v1` too
-(`shipper-ref`). Merging a compatible change to `main` releases it: once CI is green on `main`, the
-`release-v1` job moves `v1` to that commit, so every product's next deploy uses it.
+Product repos pin shipper to an exact commit SHA, never to a tag or branch: the workflow runs with the
+Cloudflare token, so a moving ref would let any change to shipper reach production unreviewed. Pin both
+the `uses:` line and `shipper-ref` to the same full SHA (the input's default is `v1`, kept for callers
+that still use `@v1`, so a SHA-pinned caller must pass it), with a comment naming the version:
+
+```yaml
+    uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
+    with:
+      shipper-ref: <full-commit-sha> # v1.x
+```
+
+To bump, change both SHAs to the new release's commit. Dependabot for GitHub Actions (`package-ecosystem:
+github-actions`) updates the `uses:` pin and its version comment for you; it does not know about
+`shipper-ref`, so change that to match in the same PR.
+
+Callers that still use `@v1` keep working, but they take whatever `v1` points at. `v1` moves only by an
+approved manual release: Actions > Release > Run workflow (optionally a full commit SHA; empty means the
+head of `main`). The `release` job runs in the protected `release` GitHub Environment, so a required
+reviewer must approve before the tag moves, and CI never moves it. The run refuses a commit that is
+not on `main`, or whose CI `test` job has not passed.
 
 A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag instead. Mark it in the commit
-(`feat!: …` or a `BREAKING CHANGE:` footer) and `release-v1` leaves `v1` where it is; create `v2` by hand.
+(`feat!: …` or a `BREAKING CHANGE:` footer): the release run refuses to move `v1` over it; create `v2` by hand.
 
 ## Development
 

@@ -412,11 +412,14 @@ function missingRollbackWorkflow(workflow: string): string {
     'jobs:',
     '  rollback:',
     '    permissions: { contents: read, checks: read, deployments: write }',
-    '    uses: ideaSquared/shipper/.github/workflows/deploy.yml@v1',
+    '    # Pin shipper to an exact commit SHA (Dependabot for GitHub Actions can bump it), and pass the same',
+    '    # SHA as shipper-ref. Replace the SHA and the version comment with the shipper release you use.',
+    '    uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x',
     '    with:',
     '      environment: ${{ inputs.environment }}',
     '      sha: ${{ inputs.sha }}',
     '      rollback: true',
+    '      shipper-ref: <full-commit-sha> # v1.x',
     '    secrets: inherit',
   ].join('\n');
 }

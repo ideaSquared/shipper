@@ -17,7 +17,7 @@ on:
         type: string
         required: true
       shipper-ref:
-        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line.
+        description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line. A caller pinned to a commit SHA must pass that same SHA here; the v1 default is for callers still on @v1.
         type: string
         default: v1
 
