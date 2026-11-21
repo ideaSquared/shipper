@@ -12,7 +12,7 @@
 #     needs: [gate, deploy]
 #     if: always() && needs.gate.result == 'success'
 #     uses: ideaSquared/shipper/.github/workflows/report.yml@<full-commit-sha>  # v1.x
-#     with: { environment: staging, outcome: '${{ needs.deploy.result }}' }
+#     with: { environment: staging, shipper-ref: <full-commit-sha>, outcome: '${{ needs.deploy.result }}' }
 #     secrets: inherit
 #
 # The same rules as deploy.yml's gate: on the default branch, ship.yaml's checks passed, any
