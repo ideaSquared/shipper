@@ -6,6 +6,7 @@
 #     uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha>  # v1.x
 #     with:
 #       environment: production
+#       shipper-ref: <full-commit-sha>   # the same SHA as the uses: line
 #     secrets: inherit
 #
 # `sha` deploys a given commit instead of the run's own; `rollback: true` lets that commit be older
