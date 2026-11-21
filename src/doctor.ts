@@ -104,6 +104,39 @@ async function checkEnvironments(client: GitHubClient, manifest: Manifest, names
   });
 }
 
+const CLOUDFLARE_SECRETS = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'] as const;
+
+// The deploy job stops with "not set" only after the gate has passed, so look for the names here.
+async function checkCloudflareSecrets(client: GitHubClient, manifest: Manifest, names: readonly string[]): Promise<CheckResult[]> {
+  const deploysToCloudflare = Object.values(manifest.components).some((component) => component.type === 'cloudflare-worker');
+  if (!deploysToCloudflare) return [];
+  const found = await Promise.all(
+    names.map((name) =>
+      client.secretNames(name).then(
+        (secrets) => ({ name, secrets }),
+        (error: unknown) => {
+          if (isAccessError(error)) return undefined;
+          throw error;
+        },
+      ),
+    ),
+  );
+  if (found.some((entry) => entry === undefined)) {
+    return [warn("can't read secrets: needs admin access", 'Ask a repo admin to run `ship doctor`, or check Settings → Secrets by hand')];
+  }
+  return found.flatMap((entry): CheckResult[] => {
+    if (!entry) return [];
+    const missing = CLOUDFLARE_SECRETS.filter((secret) => !entry.secrets.includes(secret));
+    if (missing.length === 0) return [pass(`'${entry.name}' has ${CLOUDFLARE_SECRETS.join(' and ')}`)];
+    return [
+      fail(
+        `'${entry.name}' is missing ${missing.join(' and ')}`,
+        `Add it in Settings → Environments → ${entry.name} → Secrets (or as a repo or org secret) and pass secrets: inherit`,
+      ),
+    ];
+  });
+}
+
 // GitHub uses the first CODEOWNERS it finds in this order and ignores the rest, as `ship` does.
 async function checkCodeowners(client: GitHubClient, branch: string): Promise<CheckResult> {
   const files = await Promise.all(CODEOWNERS_PATHS.map((path) => client.readFile(path, branch)));
@@ -164,6 +197,7 @@ export async function doctor(client: GitHubClient, repo: string, options: Doctor
     const groups = await Promise.all([
       workflows,
       guard('environments', () => checkEnvironments(client, manifest, names)),
+      guard('secrets', () => checkCloudflareSecrets(client, manifest, names)),
       guard('CODEOWNERS', async () => [await checkCodeowners(client, branch)]),
       guard('checks', () => checkRequiredChecks(client, manifest, head)),
       Promise.all(names.flatMap((name) => healthUrls(manifest, name).map((url) => checkHealth(url, name, fetchImpl, healthTimeoutMs)))),

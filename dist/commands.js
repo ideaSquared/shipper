@@ -71,47 +71,71 @@ async function freezeOf(ctx) {
         return undefined;
     });
 }
-// Tells the user, before they try a deploy, that the gate would stop it because of a check on head.
-async function warnIfChecksBlock(ctx) {
+// Tells the user, before they try a deploy, what the gate would stop it for: a check on head that is
+// still running or did not pass, and an environment that only takes commits live somewhere else first.
+async function warnIfBlocked(ctx, environments) {
     const { client, manifest, head, style: s } = ctx;
-    if (manifest.checks.length === 0)
-        return;
-    const runs = await client.checkRuns(head).catch((error) => {
-        ctx.print(`⚠️  ${s.warn(`Could not check the default branch head: ${error instanceof Error ? error.message : String(error)}`)}`);
-        return undefined;
-    });
-    if (!runs)
-        return;
-    const { failures, waiting } = checkProblems(manifest.checks, runs);
-    if (failures.length === 0)
-        return;
-    if (waiting.length === failures.length) {
-        ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
-        failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-        ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
-        return;
+    if (manifest.checks.length > 0) {
+        const runs = await client.checkRuns(head).catch((error) => {
+            ctx.print(`⚠️  ${s.warn(`Could not check the default branch head: ${error instanceof Error ? error.message : String(error)}`)}`);
+            return undefined;
+        });
+        const { failures, waiting } = runs ? checkProblems(manifest.checks, runs) : { failures: [], waiting: [] };
+        if (failures.length > 0 && waiting.length === failures.length) {
+            ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
+            failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
+            ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
+        }
+        else if (failures.length > 0) {
+            ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
+            failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
+        }
     }
-    ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
-    failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
+    await Promise.all(environments.map(async (env) => {
+        const requires = manifest.environments[env]?.requires ?? [];
+        if (requires.length === 0)
+            return;
+        const deployed = await client.deployedTo(head, requires).catch(() => requires);
+        const missing = requires.filter((required) => !deployed.includes(required));
+        const [first] = missing;
+        if (!first)
+            return;
+        ctx.print(`🔗 ${s.warn(`${env} only takes ${short(head)} once it is live on ${missing.join(' and ')}. Run ship deploy ${manifest.product} ${first} first.`)}`);
+    }));
+}
+// A freeze on this environment, with the reason and how to lift it.
+async function warnIfFrozen(ctx, env) {
+    const frozen = await freezeOf(ctx);
+    if (!frozen || !freezeFailure(frozen, env))
+        return;
+    describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
+    ctx.print(`   ${ctx.style.dim(`Lift it with ship unfreeze ${ctx.manifest.product} ${env} when it is safe.`)}`);
 }
 export async function status(ctx) {
     const { client, manifest, head, style: s } = ctx;
     ctx.print(`🚢 ${s.bold(manifest.product)} ${s.dim(`(${ctx.repo})`)} · ${ctx.defaultBranch} is at ${s.sha(short(head))}`);
     const rows = await Promise.all(Object.keys(manifest.environments).map(async (env) => {
-        const [latest] = (await client.deployments(env, 20)).filter((d) => d.state === 'success' || d.state === 'inactive');
+        const recent = await client.deployments(env, 20);
+        // The newest record that is live: `error` went live but failed its smoke checks (see main.ts), so a
+        // newer attempt that failed before deploying, or is still pending, doesn't hide it.
+        const latest = recent.find((d) => d.state === 'success' || d.state === 'inactive' || d.state === 'error');
         const name = s.env(env.padEnd(12));
+        const smokeFailed = latest?.state === 'error'
+            ? [`   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
+            : [];
         if (!latest)
-            return { line: `⚪ ${name} ${s.dim('never deployed')}`, upToDate: false };
+            return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`], upToDate: false };
         const upToDate = latest.sha === head;
         const behind = upToDate
             ? s.ok('up to date')
             : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
         const line = `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
-        return { line, upToDate };
+        return { env, lines: [line, ...smokeFailed], upToDate };
     }));
-    rows.forEach((row) => ctx.print(row.line));
-    if (!rows.every((row) => row.upToDate))
-        await warnIfChecksBlock(ctx);
+    rows.forEach((row) => row.lines.forEach((line) => ctx.print(line)));
+    const behind = rows.filter((row) => !row.upToDate).map((row) => row.env);
+    if (behind.length > 0)
+        await warnIfBlocked(ctx, behind);
     const frozen = await freezeOf(ctx);
     if (frozen)
         describeFreeze(ctx, frozen).forEach((line) => ctx.print(line));
@@ -169,10 +193,14 @@ export async function diff(ctx, environment) {
     const live = await ctx.client.lastSuccessfulDeployment(env);
     if (!live) {
         ctx.print(`⚪ ${s.env(env)} has never been deployed. ${ctx.defaultBranch} is at ${s.sha(short(ctx.head))}.`);
+        await warnIfBlocked(ctx, [env]);
+        await warnIfFrozen(ctx, env);
         return 0;
     }
     if (live === ctx.head) {
         ctx.print(`🟢 ${s.env(env)} is ${s.ok('up to date')} at ${s.sha(short(live))}.`);
+        // A freeze still blocks a redeploy; the checks and prerequisites don't matter for a commit that is already live.
+        await warnIfFrozen(ctx, env);
         return 0;
     }
     const comparison = await ctx.client.compare(live, ctx.head);
@@ -180,7 +208,8 @@ export async function diff(ctx, environment) {
     printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
     printMigrations(ctx, comparison);
     ctx.print(`🔗 ${s.link(comparison.url)}`);
-    await warnIfChecksBlock(ctx);
+    await warnIfBlocked(ctx, [env]);
+    await warnIfFrozen(ctx, env);
     return 0;
 }
 export async function log(ctx, environment, limit) {
@@ -239,6 +268,7 @@ export async function deploy(ctx, environment, options) {
     if (frozen && freezeFailure(frozen, env)) {
         ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
         describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+        ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${manifest.product} ${env} when it is safe.`)}`);
         return 1;
     }
     const requires = manifest.environments[env]?.requires ?? [];
@@ -346,6 +376,14 @@ async function followRun(ctx, workflow, since, options, shipped) {
         if (run.status !== 'completed')
             return follow(next, lines.length > 0 || heartbeat ? now : quietSince);
         const took = s.dim(`(${formatDuration(now - begun)})`);
+        if (run.conclusion !== 'success') {
+            jobs
+                .filter((job) => job.conclusion === 'failure')
+                .forEach((job) => {
+                const step = job.steps?.find((candidate) => candidate.conclusion === 'failure');
+                ctx.print(`   ❌ ${s.bad(step ? `${job.name} › ${step.name}` : job.name)}`);
+            });
+        }
         ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
         return run.conclusion === 'success' ? 0 : 1;
     };

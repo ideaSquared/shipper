@@ -57,11 +57,17 @@ ship logs staging --component api          # just one component
   the default branch head (a typo there blocks every deploy); and each absolute `https://` health URL
   answers (any HTTP status counts; a DNS failure, TLS error or 10s timeout fails). Reading
   Environments needs admin access: without it that check is one ⚠️ line, not a crash. It does not
-  check Cloudflare Worker secrets, which would need a Cloudflare token.
+  check the values of Cloudflare Worker secrets, which would need a Cloudflare token. When a component is a
+  `cloudflare-worker`, it does check that `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` exist for each
+  environment, as a repo, environment or org secret (❌ if missing; ⚠️ without admin access to read them).
 - It signs in with `GH_TOKEN`, `GITHUB_TOKEN` or your `gh` login. `status`, `diff` and `log` also
   work without a token on public repos, within GitHub's rate limit.
 - `ship status` and `ship diff` warn before you deploy: if a `checks:` check on the default branch head is
   still running (⏳) or did not pass (⛔), they say so, so you don't find out by starting a deploy.
+  They also say when an environment only takes commits that are live on another first (🔗), `ship diff`
+  shows a freeze that would block it (❄️), and `ship status` flags a release that went live but failed its
+  smoke checks (⚠️) until a later deploy replaces it. When a deploy fails, `ship deploy` names the job and
+  step that failed before the link to the run.
 - If the only thing blocking `deploy` is a check that is still running, it says so (⏳, not ⛔) and that
   the result is not known yet: run the same deploy again once the check passes.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits

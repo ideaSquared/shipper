@@ -25,10 +25,11 @@ export function parseFreeze(text) {
 export const isFrozen = (freeze, environment) => freeze !== undefined && (freeze.environments === 'all' || freeze.environments.includes(environment));
 const scope = (freeze) => (freeze.environments === 'all' ? 'all environments' : freeze.environments.join(', '));
 // Why an environment can't be deployed to, or undefined when it can.
-export function freezeFailure(freeze, environment) {
+export function freezeFailure(freeze, environment, product) {
     if (!isFrozen(freeze, environment))
         return undefined;
-    return `${environment} is frozen by ${freeze.by} since ${freeze.at}: ${freeze.reason}`;
+    const lift = product ? `ship unfreeze ${product} ${environment}` : 'ship unfreeze';
+    return `${environment} is frozen by ${freeze.by} since ${freeze.at}: ${freeze.reason}. Lift it with ${lift} when it is safe.`;
 }
 // The workflow's view: the value of `vars.SHIP_FREEZE` (an empty string when it is not set).
 // A value that can't be read blocks the deploy rather than letting it through.

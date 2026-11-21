@@ -77,16 +77,16 @@ async function deployOne(name, component, options) {
         const buildEnv = { SHIP_ENVIRONMENT: options.environment, SHIP_WRANGLER_ENV: wranglerEnv ?? '' };
         const build = await run('bash', ['-c', component.build], repoRoot, buildEnv);
         if (build.code !== 0)
-            return { name, status: 'failed', detail: 'build failed' };
+            return { name, status: 'failed', detail: 'build failed; this component was not deployed. See the build step in the job log.' };
     }
     if (component.migrations) {
         const migrate = await wrangler(['d1', 'migrations', 'apply', component.migrations.d1, '--remote']);
         if (migrate.code !== 0)
-            return { name, status: 'failed', detail: 'D1 migrations failed; nothing was deployed' };
+            return { name, status: 'failed', detail: 'D1 migrations failed; this component was not deployed. See the migrations step in the job log.' };
     }
     const deploy = await wrangler(['deploy', '--message', `ship ${short} by ${actor}`]);
     if (deploy.code !== 0)
-        return { name, status: 'failed', detail: 'wrangler deploy failed' };
+        return { name, status: 'failed', detail: "wrangler deploy failed; this component was not updated. See wrangler's error in the job log." };
     const url = parseDeployedUrls(deploy.output)[0];
     if (!component.health)
         return { name, status: 'deployed', url };

@@ -273,7 +273,22 @@ components: { api: { type: cloudflare-worker, migrations: { d1: db } } }
       ),
     );
     expect(results[0]?.status).toBe('failed');
+    expect(results[0]?.detail).toBe('D1 migrations failed; this component was not deployed. See the migrations step in the job log.');
     expect(calls.some((call) => call.args.includes('deploy'))).toBe(false);
+  });
+
+  it('says what a failed wrangler deploy left behind, and where to look', async () => {
+    const { run } = fakeRun((call) => call.args.includes('deploy'));
+    const results = await deployComponents(options('product: x\nenvironments: { production: {} }\ncomponents: { api: { type: cloudflare-worker } }\n', run));
+    expect(results[0]?.detail).toBe("wrangler deploy failed; this component was not updated. See wrangler's error in the job log.");
+  });
+
+  it('says a failed build left this component undeployed, not the whole release', async () => {
+    const { run } = fakeRun((call) => call.command === 'bash');
+    const results = await deployComponents(
+      options('product: x\nenvironments: { production: {} }\ncomponents: { api: { type: cloudflare-worker, build: pnpm build } }\n', run),
+    );
+    expect(results[0]?.detail).toBe('build failed; this component was not deployed. See the build step in the job log.');
   });
 
   it('rolls back when the health check keeps failing', async () => {
