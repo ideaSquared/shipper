@@ -2,7 +2,6 @@
 // ship: deploy any ideaSquared product from any folder. See the README for the commands.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, pickEnvironment, rollback, status, statusAll } from "./commands.js";
@@ -11,6 +10,7 @@ import { doctor } from "./doctor.js";
 import { createGitHubClient } from "./github.js";
 import { assertCheckout, logs, planLogs, spawnTail } from "./logs.js";
 import { parseManifest } from "./manifest.js";
+import { ask, confirm } from "./prompts.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
 import { terminalStyle } from "./style.js";
@@ -49,22 +49,6 @@ function quiet(command, args) {
     catch {
         return undefined;
     }
-}
-async function confirm(question) {
-    if (!process.stdin.isTTY)
-        throw new Error('Not a terminal, so ship cannot ask. Pass --yes to deploy without asking.');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(`${question} [y/N] `);
-    rl.close();
-    return /^y(es)?$/i.test(answer.trim());
-}
-async function ask(question) {
-    if (!process.stdin.isTTY)
-        throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(`${question} `);
-    rl.close();
-    return answer;
 }
 // The repo being worked on, so a GitHub refusal can name its owner.
 let current;
