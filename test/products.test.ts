@@ -21,6 +21,12 @@ describe('resolveRepo', () => {
     expect(resolveRepo({ product: 'agent-idea' })).toBe('ideaSquared/agent-idea');
   });
 
+  it('knows ideasquared-website', () => {
+    expect(resolveRepo({ product: 'ideasquared-website' })).toBe('ideaSquared/ideasquared-website');
+    expect(productForRepo('ideaSquared/ideasquared-website')).toBe('ideasquared-website');
+    expect(activeProducts()).toHaveProperty('ideasquared-website');
+  });
+
   it('explains what to do when it cannot tell', () => {
     expect(() => resolveRepo({ product: 'nope' })).toThrow("Unknown product 'nope'");
     expect(() => resolveRepo({})).toThrow('Which product?');

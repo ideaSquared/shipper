@@ -24,6 +24,10 @@ export const PRODUCTS = {
         repo: 'ideaSquared/ideasquared-bot',
         description: 'ideaSquared Discord bot: deploy messages and the live board',
     },
+    'ideasquared-website': {
+        repo: 'ideaSquared/ideasquared-website',
+        description: 'ideaSquared studio website',
+    },
 };
 // Product name → repo for the products still shipped, e.g. for `ship status` across everything.
 export function activeProducts() {
