@@ -4,25 +4,70 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
+# Pull-request runs cancel superseded ones; runs on main never cancel.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
       # dist/ is committed so `pnpm add -g github:ideaSquared/shipper` works without a build step.
+      # `git status` (not `git diff`) so a file the build creates that was never committed fails too.
       - name: dist/ matches src/
         run: |
-          pnpm build
-          git diff --exit-code -- dist || { echo "::error::dist/ is out of date. Run pnpm build and commit it."; exit 1; }
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            git status --porcelain -- dist
+            echo "::error::dist/ is out of date. Run pnpm build and commit it."
+            exit 1
+          fi
+      # What a user gets from the packed repo: install the tarball globally and run it.
+      - name: packed CLI installs and runs
+        run: |
+          pnpm pack --pack-destination "$RUNNER_TEMP/pack"
+          npm install --global --prefix "$RUNNER_TEMP/global" "$RUNNER_TEMP"/pack/*.tgz
+          installed="$("$RUNNER_TEMP/global/bin/ship" --version)"
+          expected="$(node -p "require('./package.json').version")"
+          if [ "$installed" != "$expected" ]; then
+            echo "::error::ship --version printed '$installed', expected '$expected'."
+            exit 1
+          fi
+
+  # The squash-merge commit takes the pull request title, so check it the way commitlint checks a commit.
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: PR title is a Conventional Commit
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint

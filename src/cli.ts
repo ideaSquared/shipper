@@ -2,7 +2,6 @@
 // ship: deploy any ideaSquared product from any folder. See the README for the commands.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, pickEnvironment, rollback, status, statusAll } from './commands.ts';
@@ -11,6 +10,7 @@ import { doctor } from './doctor.ts';
 import { createGitHubClient } from './github.ts';
 import { assertCheckout, logs, planLogs, spawnTail } from './logs.ts';
 import { parseManifest } from './manifest.ts';
+import { ask, confirm } from './prompts.ts';
 import { GitHubApiError, isAccessError } from './github.ts';
 import {
   accessHint,
@@ -40,6 +40,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship doctor [product] [env]        check the deploy setup before deploying (exit 1 if something fails)
 
 Options:
+  --version           print the installed version
   --repo owner/name   a repo not in the product list
   -y, --yes           don't ask before deploying or rolling back (production still asks
                       for the product name)
@@ -62,22 +63,6 @@ function quiet(command: string, args: string[]): string | undefined {
   }
 }
 
-async function confirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) throw new Error('Not a terminal, so ship cannot ask. Pass --yes to deploy without asking.');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`${question} [y/N] `);
-  rl.close();
-  return /^y(es)?$/i.test(answer.trim());
-}
-
-async function ask(question: string): Promise<string> {
-  if (!process.stdin.isTTY) throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`${question} `);
-  rl.close();
-  return answer;
-}
-
 // The repo being worked on, so a GitHub refusal can name its owner.
 let current: { repo: string; client: ReturnType<typeof createGitHubClient>; writesVariables?: boolean } | undefined;
 
@@ -87,6 +72,12 @@ async function ownerOf(client: ReturnType<typeof createGitHubClient>): Promise<s
     if (text) return ownerFromCodeowners(text);
   }
   return undefined;
+}
+
+// package.json sits one folder above both src/ and dist/.
+function shipVersion(): string {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  return version;
 }
 
 async function main(): Promise<number> {
@@ -102,8 +93,13 @@ async function main(): Promise<number> {
       component: { type: 'string' },
       n: { type: 'string', short: 'n', default: '10' },
       help: { type: 'boolean', short: 'h', default: false },
+      version: { type: 'boolean', default: false },
     },
   });
+  if (values.version) {
+    console.log(shipVersion());
+    return 0;
+  }
   const [first, ...rest] = positionals;
   if (values.help || !first || first === 'help') {
     console.log(HELP);
@@ -165,7 +161,10 @@ main().then(
     if (error instanceof GitHubApiError && error.rateLimited) console.error(`⏳ ${RATE_LIMIT_HINT}`);
     else if (current && isAccessError(error)) {
       console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-      if (current.writesVariables) console.error(`   Freezing writes the repo's SHIP_FREEZE Actions variable: it needs repo admin, or a fine-grained token with Variables: read and write.`);
+      if (current.writesVariables)
+        console.error(
+          `   Freezing writes the repo's SHIP_FREEZE Actions variable: it needs repo admin, or a fine-grained token with Variables: read and write.`,
+        );
     }
     process.exit(1);
   },

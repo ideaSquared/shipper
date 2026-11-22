@@ -34,7 +34,9 @@ function checkVerdict(name, runs) {
     if (matching.some((run) => run.status !== 'completed')) {
         return { failure: `check '${name}' is still running, so its result is not known yet. Deploy again once it passes.`, waiting: name };
     }
-    return { failure: `check '${name}' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.` };
+    return {
+        failure: `check '${name}' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.`,
+    };
 }
 export function checkProblems(names, runs) {
     const verdicts = names.map((name) => checkVerdict(name, runs));
@@ -48,9 +50,7 @@ export function evaluateGate(manifest, environment, facts) {
     const short = facts.sha.slice(0, 7);
     const checks = checkProblems(manifest.checks, facts.checkRuns);
     const failures = [
-        facts.onDefaultBranch
-            ? undefined
-            : `${short} is not on ${facts.defaultBranch}. Merge it to ${facts.defaultBranch} first: only the default branch deploys.`,
+        facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}. Merge it to ${facts.defaultBranch} first: only the default branch deploys.`,
         facts.rollback ? undefined : freezeFailure(facts.freeze, environment, manifest.product),
         liveFailure({ ...facts, product: manifest.product }, environment),
         ...checks.failures,

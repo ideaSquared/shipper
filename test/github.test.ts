@@ -208,12 +208,13 @@ describe('createGitHubClient', () => {
   });
 
   it('tells a spent rate limit apart from a refusal', async () => {
-    const limited: typeof fetch = async () =>
-      new Response(JSON.stringify({ message: 'API rate limit exceeded for 1.2.3.4.' }), { status: 403 });
-    const byHeader: typeof fetch = async () =>
-      new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } });
+    const limited: typeof fetch = async () => new Response(JSON.stringify({ message: 'API rate limit exceeded for 1.2.3.4.' }), { status: 403 });
+    const byHeader: typeof fetch = async () => new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } });
     const refused: typeof fetch = async () => new Response('{"message":"Forbidden"}', { status: 403 });
-    const read = (fetchImpl: typeof fetch) => createGitHubClient('acme/app', undefined, fetchImpl).readFile('ship.yaml', 'main').catch((error: unknown) => error);
+    const read = (fetchImpl: typeof fetch) =>
+      createGitHubClient('acme/app', undefined, fetchImpl)
+        .readFile('ship.yaml', 'main')
+        .catch((error: unknown) => error);
     const [a, b, c] = await Promise.all([read(limited), read(byHeader), read(refused)]);
     expect([isAccessError(a), isAccessError(b), isAccessError(c)]).toEqual([false, false, true]);
     expect(a).toMatchObject({ rateLimited: true });
@@ -234,11 +235,8 @@ describe('createGitHubClient', () => {
   });
 
   it("includes GitHub's own message in errors", async () => {
-    const fetchImpl: typeof fetch = async () =>
-      new Response(JSON.stringify({ message: 'API rate limit exceeded' }), { status: 403 });
-    await expect(createGitHubClient('acme/app', undefined, fetchImpl).defaultBranch()).rejects.toThrow(
-      'GitHub API / returned 403: API rate limit exceeded',
-    );
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ message: 'API rate limit exceeded' }), { status: 403 });
+    await expect(createGitHubClient('acme/app', undefined, fetchImpl).defaultBranch()).rejects.toThrow('GitHub API / returned 403: API rate limit exceeded');
   });
 
   it("reads GitHub's compare status between two commits", async () => {
@@ -280,8 +278,7 @@ describe('createGitHubClient', () => {
   });
 
   it('gives the HTTP status of a refused call, so a missing permission can be explained', async () => {
-    const fetchImpl: typeof fetch = async () =>
-      new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403 });
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403 });
     const error = await createGitHubClient('acme/app', 'token', fetchImpl)
       .createDeployment({ sha: 'aaa', environment: 'staging', actor: 'o', production: false })
       .catch((caught: unknown) => caught);
@@ -327,10 +324,7 @@ describe('environments', () => {
   it('says which environments have a required-reviewers rule, across pages', async () => {
     const { fetch } = fakeFetch({
       '/environments?per_page=100': {
-        environments: [
-          { name: 'production', protection_rules: [{ type: 'wait_timer' }, { type: 'required_reviewers' }] },
-          { name: 'staging' },
-        ],
+        environments: [{ name: 'production', protection_rules: [{ type: 'wait_timer' }, { type: 'required_reviewers' }] }, { name: 'staging' }],
       },
     });
     const github = createGitHubClient('acme/app', 'token', fetch);

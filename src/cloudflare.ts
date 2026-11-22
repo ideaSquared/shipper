@@ -72,7 +72,9 @@ export async function pollHealth(
     };
   };
   const attempt = async (n: number): Promise<{ ok: boolean; detail: string }> => {
-    const result = await check().catch((error: unknown): Attempt => ({ failure: (error instanceof Error ? error.message : String(error)) || 'request failed' }));
+    const result = await check().catch((error: unknown): Attempt => ({
+      failure: (error instanceof Error ? error.message : String(error)) || 'request failed',
+    }));
     if (result.failure === undefined && result.mismatch === undefined) return { ok: true, detail: `${url} answered` };
     if (n >= attempts) {
       return result.mismatch
@@ -86,12 +88,7 @@ export async function pollHealth(
 }
 
 // Any failure here, including not knowing which URL to check, rolls the new version back.
-async function checkHealth(
-  health: HealthCheck,
-  environment: string,
-  deployOutput: string,
-  options: DeployOptions,
-): Promise<{ ok: boolean; detail: string }> {
+async function checkHealth(health: HealthCheck, environment: string, deployOutput: string, options: DeployOptions): Promise<{ ok: boolean; detail: string }> {
   const resolved = ((): { url: string } | { error: string } => {
     try {
       return { url: resolveHealthUrl(health.url, parseDeployedUrls(deployOutput)) };
@@ -127,11 +124,13 @@ async function deployOne(name: string, component: CloudflareWorker, options: Dep
 
   if (component.migrations) {
     const migrate = await wrangler(['d1', 'migrations', 'apply', component.migrations.d1, '--remote']);
-    if (migrate.code !== 0) return { name, status: 'failed', detail: 'D1 migrations failed; this component was not deployed. See the migrations step in the job log.' };
+    if (migrate.code !== 0)
+      return { name, status: 'failed', detail: 'D1 migrations failed; this component was not deployed. See the migrations step in the job log.' };
   }
 
   const deploy = await wrangler(['deploy', '--message', `ship ${short} by ${actor}`]);
-  if (deploy.code !== 0) return { name, status: 'failed', detail: "wrangler deploy failed; this component was not updated. See wrangler's error in the job log." };
+  if (deploy.code !== 0)
+    return { name, status: 'failed', detail: "wrangler deploy failed; this component was not updated. See wrangler's error in the job log." };
   const url = parseDeployedUrls(deploy.output)[0];
 
   if (!component.health) return { name, status: 'deployed', url };
@@ -154,22 +153,16 @@ export async function deployComponents(options: DeployOptions): Promise<Componen
     const results = await previous;
     if (results.some((result) => result.status !== 'deployed')) return [...results, { name, status: 'skipped' }];
     if (component.type === 'external') {
-      return [...results, { name, status: 'failed', detail: `deployed by ${component.workflow}, not by shipper's deploy job: call gate.yml and report.yml around it` }];
+      return [
+        ...results,
+        { name, status: 'failed', detail: `deployed by ${component.workflow}, not by shipper's deploy job: call gate.yml and report.yml around it` },
+      ];
     }
     return [...results, await deployOne(name, component, options)];
   }, Promise.resolve([]));
 }
 
 export function renderSummary(environment: string, sha: string, results: readonly ComponentResult[]): string {
-  const rows = results.map(
-    (result) => `| ${result.name} | ${result.status} | ${result.url ?? ''} | ${result.detail ?? ''} |`,
-  );
-  return [
-    `### Ship ${sha.slice(0, 7)} to ${environment}`,
-    '',
-    '| Component | Result | URL | Detail |',
-    '| --- | --- | --- | --- |',
-    ...rows,
-    '',
-  ].join('\n');
+  const rows = results.map((result) => `| ${result.name} | ${result.status} | ${result.url ?? ''} | ${result.detail ?? ''} |`);
+  return [`### Ship ${sha.slice(0, 7)} to ${environment}`, '', '| Component | Result | URL | Detail |', '| --- | --- | --- | --- |', ...rows, ''].join('\n');
 }

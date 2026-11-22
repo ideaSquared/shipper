@@ -61,7 +61,9 @@ export function describeFreeze(ctx: Context, freeze: Freeze): string[] {
   const s = ctx.style;
   const at = Number.isNaN(Date.parse(freeze.at))
     ? freeze.at
-    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: ctx.timeZone }).format(new Date(freeze.at));
+    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: ctx.timeZone }).format(
+        new Date(freeze.at),
+      );
   return [`❄️  ${s.warn('frozen')}: ${scope(freeze)}`, `   ${freeze.reason}`, `   ${s.dim(`by ${freeze.by} · ${at}`)}`];
 }
 
@@ -83,11 +85,7 @@ function widen(existing: Freeze | undefined, environment: string | undefined, al
   return all.every((name) => merged.includes(name)) ? 'all' : merged;
 }
 
-export async function freeze(
-  ctx: Context,
-  environment: string | undefined,
-  options: Approval & { reason: string | undefined },
-): Promise<number> {
+export async function freeze(ctx: Context, environment: string | undefined, options: Approval & { reason: string | undefined }): Promise<number> {
   const { client, style: s } = ctx;
   if (!ctx.canWrite) throw new Error('Freezing needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
   if (!options.reason?.trim()) throw new Error('A freeze needs a reason everyone can see: --reason "…".');
@@ -142,9 +140,7 @@ export async function unfreeze(ctx: Context, environment: string | undefined, op
     // Re-read after the prompt so a freeze someone added meanwhile is kept (see freeze()).
     const latest = await readFreeze(client);
     // Lifting one environment keeps the rest frozen, including out of an "all" freeze.
-    const remaining = latest
-      ? (latest.environments === 'all' ? allEnvironments(ctx) : latest.environments).filter((name) => name !== environment)
-      : [];
+    const remaining = latest ? (latest.environments === 'all' ? allEnvironments(ctx) : latest.environments).filter((name) => name !== environment) : [];
     if (latest && remaining.length > 0) await client.writeVariable(FREEZE_VARIABLE, JSON.stringify({ ...latest, environments: remaining }));
     else if (latest) await client.deleteVariable(FREEZE_VARIABLE);
   }

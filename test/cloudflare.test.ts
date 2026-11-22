@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  deployComponents,
-  parseDeployedUrls,
-  pollHealth,
-  renderSummary,
-  resolveHealthUrl,
-  type Run,
-} from '../src/cloudflare.ts';
+import { deployComponents, parseDeployedUrls, pollHealth, renderSummary, resolveHealthUrl, type Run } from '../src/cloudflare.ts';
 import { parseManifest } from '../src/manifest.ts';
 
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -33,7 +26,10 @@ function fakeRun(fail: (call: Call) => boolean = () => false): { run: Run; calls
   return { run, calls };
 }
 
-const respond = (status: number): typeof fetch => async () => new Response(null, { status });
+const respond =
+  (status: number): typeof fetch =>
+  async () =>
+    new Response(null, { status });
 const noSleep = async () => {};
 
 function options(manifestText: string, run: Run, fetchImpl: typeof fetch = respond(200)) {
@@ -81,9 +77,7 @@ Current Version ID: 00d2fe82-e759-4e2e-962f-88c31d47903f`;
 
 describe('resolveHealthUrl', () => {
   it('puts a path on the deployed URL', () => {
-    expect(resolveHealthUrl('/api/stats', ['https://bot.example.workers.dev'])).toBe(
-      'https://bot.example.workers.dev/api/stats',
-    );
+    expect(resolveHealthUrl('/api/stats', ['https://bot.example.workers.dev'])).toBe('https://bot.example.workers.dev/api/stats');
   });
 
   it('keeps a full URL as it is', () => {
@@ -103,8 +97,7 @@ describe('pollHealth', () => {
   });
 
   it('treats a request that never answers as a failed attempt', async () => {
-    const hang: typeof fetch = (_input, init) =>
-      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    const hang: typeof fetch = (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
     const result = await pollHealth('https://x.dev/h', hang, noSleep, 2, 0, 20);
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/failed 2 times/);
@@ -117,7 +110,10 @@ describe('pollHealth', () => {
 });
 
 describe('pollHealth with expect', () => {
-  const body = (text: string): typeof fetch => async () => new Response(text, { status: 200 });
+  const body =
+    (text: string): typeof fetch =>
+    async () =>
+      new Response(text, { status: 200 });
   const match = { expect: '"status":"ok"', label: 'staging' };
 
   it('passes when the body contains the text', async () => {
@@ -129,7 +125,7 @@ describe('pollHealth with expect', () => {
     const result = await pollHealth('https://x.dev/h', body(`<html>Maintenance ${'z'.repeat(500)}</html>`), noSleep, 2, 0, 1000, match);
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(
-      /^health check for staging returned 200 but body did not contain "\\"status\\":\\"ok\\"\"; body was "<html>Maintenance z+….*" \(https:\/\/x\.dev\/h, 2 attempts\)$/,
+      /^health check for staging returned 200 but body did not contain "\\"status\\":\\"ok\\""; body was "<html>Maintenance z+….*" \(https:\/\/x\.dev\/h, 2 attempts\)$/,
     );
     expect(result.detail.length).toBeLessThan(300);
   });
@@ -152,9 +148,7 @@ describe('deployComponents', () => {
         detail: 'health check passed: https://wardogs-discord-bot.example.workers.dev/api/stats answered',
       },
     ]);
-    expect(calls).toEqual([
-      { command: 'pnpm', args: ['exec', 'wrangler', 'deploy', '--message', 'ship abcdef1 by octocat'], cwd: '/repo' },
-    ]);
+    expect(calls).toEqual([{ command: 'pnpm', args: ['exec', 'wrangler', 'deploy', '--message', 'ship abcdef1 by octocat'], cwd: '/repo' }]);
   });
 
   it('builds, migrates and deploys in that order with the wrangler env', async () => {
@@ -296,14 +290,7 @@ components: { api: { type: cloudflare-worker, migrations: { d1: db } } }
     const results = await deployComponents(options(SINGLE, run, respond(500)));
     expect(results[0]?.status).toBe('rolled-back');
     expect(results[0]?.detail).toMatch(/Rolled back to the previous version/);
-    expect(calls.at(-1)?.args).toEqual([
-      'exec',
-      'wrangler',
-      'rollback',
-      '--yes',
-      '--message',
-      'ship: health check failed for abcdef1',
-    ]);
+    expect(calls.at(-1)?.args).toEqual(['exec', 'wrangler', 'rollback', '--yes', '--message', 'ship: health check failed for abcdef1']);
   });
 
   it('rolls back when it cannot tell which URL to check', async () => {
@@ -339,8 +326,6 @@ components:
 
 describe('renderSummary', () => {
   it('lists each component and what happened to it', () => {
-    expect(renderSummary('production', SHA, [{ name: 'bot', status: 'deployed', url: 'https://b.dev' }])).toContain(
-      '| bot | deployed | https://b.dev |  |',
-    );
+    expect(renderSummary('production', SHA, [{ name: 'bot', status: 'deployed', url: 'https://b.dev' }])).toContain('| bot | deployed | https://b.dev |  |');
   });
 });

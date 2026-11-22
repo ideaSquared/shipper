@@ -4,7 +4,10 @@ const escape = (text) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 // A directory pattern as a regex over a whole directory path. `*` matches within one path segment.
 function directoryPattern(pattern) {
     // `.`, `./` and `/` all mean the repo root, whose files have an empty directory.
-    const segments = pattern.replace(/^\.?\/+|\/+$/g, '').replace(/^\.$/, '').split('/');
+    const segments = pattern
+        .replace(/^\.?\/+|\/+$/g, '')
+        .replace(/^\.$/, '')
+        .split('/');
     return new RegExp(`^${segments.map((segment) => segment.split('*').map(escape).join('[^/]*')).join('/')}$`);
 }
 // Migration files sit directly in a listed directory. Files in subfolders don't count, so tool

@@ -48,19 +48,23 @@ jobs:
       checks: read
       deployments: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: app
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ideaSquared/shipper
           ref: ${{ inputs.shipper-ref }}
           path: shipper
           persist-credentials: false
-      - uses: actions/setup-node@v5
+      # The Node the caller's CI tests: its .nvmrc, or 24 when it has none.
+      - name: Pick the Node version
+        run: |
+          if [ -f app/.nvmrc ]; then cp app/.nvmrc node-version; else echo 24 > node-version; fi
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: node-version
       - run: corepack enable
       - run: pnpm install --frozen-lockfile --prod
         working-directory: shipper

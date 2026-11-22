@@ -211,6 +211,10 @@ export async function doctor(client: GitHubClient, repo: string, options: Doctor
   });
   const failures = results.filter((result) => result.level === 'fail').length;
   const warnings = results.filter((result) => result.level === 'warn').length;
-  print(failures > 0 ? s.bad(`${failures} failed, ${warnings} warning${warnings === 1 ? '' : 's'}`) : `All good${warnings ? `, ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}`);
+  print(
+    failures > 0
+      ? s.bad(`${failures} failed, ${warnings} warning${warnings === 1 ? '' : 's'}`)
+      : `All good${warnings ? `, ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}`,
+  );
   return failures > 0 ? 1 : 0;
 }

@@ -64,7 +64,11 @@ const actorOf = (env: ShipEnv): string => shipActor(env.GITHUB_EVENT_NAME, env.G
 const runUrlOf = (env: ShipEnv) => `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 
 // Sends the deploy message to Discord through the ideaSquared bot. Only ever warns.
-async function notify(env: ShipEnv, manifest: Manifest, input: Omit<ReportInput, 'project' | 'product' | 'repository' | 'actor' | 'at' | 'sha' | 'runUrl'>): Promise<void> {
+async function notify(
+  env: ShipEnv,
+  manifest: Manifest,
+  input: Omit<ReportInput, 'project' | 'product' | 'repository' | 'actor' | 'at' | 'sha' | 'runUrl'>,
+): Promise<void> {
   if (!manifest.discord) {
     annotate('Ship', 'No Discord message: ship.yaml has no discord project.', 'notice');
     return;
@@ -176,10 +180,7 @@ async function gate(environment: string): Promise<number> {
     return 0;
   }
   result.failures.forEach((failure) => annotate('Ship gate', failure));
-  summarise(
-    env.GITHUB_STEP_SUMMARY,
-    [`### Ship blocked for ${environment}`, '', ...result.failures.map((f) => `- ${f}`), ''].join('\n'),
-  );
+  summarise(env.GITHUB_STEP_SUMMARY, [`### Ship blocked for ${environment}`, '', ...result.failures.map((f) => `- ${f}`), ''].join('\n'));
   await notify(env, manifest, { environment, outcome: 'blocked', failures: result.failures });
   return 1;
 }
@@ -257,9 +258,7 @@ async function deploy(environment: string): Promise<number> {
   // Only once every component deployed and passed its health check.
   const smoke = await smokeAfterDeploy(manifest, environment, deployed, { fetch, sleep: (ms) => sleep(ms) });
   const results = smoke ? [...deployed, smoke] : deployed;
-  results.forEach((result) =>
-    console.log([`${result.name}: ${result.status}`, result.url, result.detail].filter(Boolean).join(' · ')),
-  );
+  results.forEach((result) => console.log([`${result.name}: ${result.status}`, result.url, result.detail].filter(Boolean).join(' · ')));
   summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.SHIP_SHA, results));
   results
     .filter((result) => result.status === 'failed' || result.status === 'rolled-back')
@@ -299,9 +298,7 @@ async function report(environment: string): Promise<number> {
   const deployedOk = env.SHIP_OUTCOME === 'success';
   const deployComponent: ComponentResult = { name: 'deploy', status: deployedOk ? 'deployed' : 'failed', detail: `deploy job: ${env.SHIP_OUTCOME}` };
   // Smoke checks run only for a successful deploy, before reporting, so a failure shows as a failed deploy.
-  const smoke = deployedOk
-    ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) }))
-    : undefined;
+  const smoke = deployedOk ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) })) : undefined;
   if (smoke) annotate('Ship smoke', smoke.detail ?? 'smoke check failed');
   const components = smoke ? [deployComponent, smoke] : [deployComponent];
   summarise(env.GITHUB_STEP_SUMMARY, renderSummary(environment, env.SHIP_SHA, components));

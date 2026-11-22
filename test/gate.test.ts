@@ -58,10 +58,7 @@ describe('evaluateGate', () => {
   it('accepts a check that passed on a re-run after an earlier failure', () => {
     const result = evaluateGate(manifest, 'staging', {
       ...passing,
-      checkRuns: [
-        ...passing.checkRuns,
-        { name: 'verify', status: 'completed', conclusion: 'failure' },
-      ],
+      checkRuns: [...passing.checkRuns, { name: 'verify', status: 'completed', conclusion: 'failure' }],
     });
     expect(result.ok).toBe(true);
   });
@@ -91,9 +88,7 @@ describe('evaluateGate', () => {
     const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
     const older = { ...passing, live: { sha: LIVE, relation: 'behind' }, rollback: true };
     expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({ ok: true, failures: [], waiting: [] });
-    expect(evaluateGate(manifest, 'production', older).failures).toEqual([
-      "abcdef1 was never live on production, so it can't be a rollback target",
-    ]);
+    expect(evaluateGate(manifest, 'production', older).failures).toEqual(["abcdef1 was never live on production, so it can't be a rollback target"]);
   });
 
   it('keeps every other rule for a rollback', () => {
@@ -112,9 +107,7 @@ describe('liveFailure', () => {
       'abcdef1 is older than fedcba9, which is live on staging. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ship rollback.',
     );
     expect(liveFailure({ sha: SHA, live, deployedTo: ['staging'], rollback: true }, 'staging')).toBeUndefined();
-    expect(liveFailure({ sha: SHA, deployedTo: [], rollback: true }, 'staging')).toBe(
-      "abcdef1 was never live on staging, so it can't be a rollback target",
-    );
+    expect(liveFailure({ sha: SHA, deployedTo: [], rollback: true }, 'staging')).toBe("abcdef1 was never live on staging, so it can't be a rollback target");
   });
 });
 

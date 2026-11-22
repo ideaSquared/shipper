@@ -101,7 +101,14 @@ describe('doctor', () => {
   });
 
   it('warns, without failing, when production has no required reviewers', async () => {
-    const { code, text } = await run(client({ environments: async () => [{ name: 'staging', requiredReviewers: false }, { name: 'production', requiredReviewers: false }] }));
+    const { code, text } = await run(
+      client({
+        environments: async () => [
+          { name: 'staging', requiredReviewers: false },
+          { name: 'production', requiredReviewers: false },
+        ],
+      }),
+    );
     expect(code).toBe(0);
     expect(text).toContain("'production' has no required reviewers");
     expect(text).toContain('Add required reviewers in Settings → Environments → production');
@@ -147,9 +154,11 @@ describe('doctor', () => {
   });
 
   it('fails a health URL on a DNS failure, a TLS error or a timeout, naming the cause', async () => {
-    const failing = (error: Error): typeof fetch => async () => {
-      throw error;
-    };
+    const failing =
+      (error: Error): typeof fetch =>
+      async () => {
+        throw error;
+      };
     const dns = await run(client(), { fetch: failing(new TypeError('fetch failed', { cause: Object.assign(new Error('x'), { code: 'ENOTFOUND' }) })) });
     expect(dns.code).toBe(1);
     expect(dns.text).toContain('domain does not resolve');
@@ -183,10 +192,7 @@ describe('doctor', () => {
   });
 
   it('only fetches absolute https health URLs, once each, and never prints the query', async () => {
-    const manifest = MANIFEST.replace(
-      /health:[\s\S]*$/,
-      'health:\n      staging: /health\n      production: { url: "http://example.com/health" }\n',
-    );
+    const manifest = MANIFEST.replace(/health:[\s\S]*$/, 'health:\n      staging: /health\n      production: { url: "http://example.com/health" }\n');
     const none = await run(client({}, { ...FILES, 'ship.yaml': manifest }), {
       fetch: async () => {
         throw new Error('should not be called');
@@ -234,7 +240,9 @@ describe('doctor', () => {
 
   it('fails, before a deploy does, when a Cloudflare secret is missing', async () => {
     const { code, text } = await run(
-      client({ secretNames: async (environment) => (environment === 'staging' ? ['CLOUDFLARE_ACCOUNT_ID'] : ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) }),
+      client({
+        secretNames: async (environment) => (environment === 'staging' ? ['CLOUDFLARE_ACCOUNT_ID'] : ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']),
+      }),
     );
     expect(code).toBe(1);
     expect(text).toContain("❌ 'staging' is missing CLOUDFLARE_API_TOKEN");

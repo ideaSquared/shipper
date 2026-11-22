@@ -78,7 +78,7 @@ describe('freeze', () => {
     expect(lines[0]).toBe('❄️  frozen: production');
   });
 
-  it("keeps a freeze someone added while the prompt was open", async () => {
+  it('keeps a freeze someone added while the prompt was open', async () => {
     const { client, state, saved } = store();
     const confirm = async () => ((state.value = JSON.stringify({ ...existing, environments: ['staging'] })), true);
     await freeze(context(client).ctx, 'production', options({ yes: false, confirm }));

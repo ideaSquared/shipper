@@ -2,7 +2,6 @@
 // ship: deploy any ideaSquared product from any folder. See the README for the commands.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { deploy, diff, loadContext, log, pickEnvironment, rollback, status, statusAll } from "./commands.js";
@@ -11,6 +10,7 @@ import { doctor } from "./doctor.js";
 import { createGitHubClient } from "./github.js";
 import { assertCheckout, logs, planLogs, spawnTail } from "./logs.js";
 import { parseManifest } from "./manifest.js";
+import { ask, confirm } from "./prompts.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { accessHint, RATE_LIMIT_HINT, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, PRODUCTS, repoFromRemote, resolveRepo, } from "./products.js";
 import { terminalStyle } from "./style.js";
@@ -28,6 +28,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship doctor [product] [env]        check the deploy setup before deploying (exit 1 if something fails)
 
 Options:
+  --version           print the installed version
   --repo owner/name   a repo not in the product list
   -y, --yes           don't ask before deploying or rolling back (production still asks
                       for the product name)
@@ -49,22 +50,6 @@ function quiet(command, args) {
         return undefined;
     }
 }
-async function confirm(question) {
-    if (!process.stdin.isTTY)
-        throw new Error('Not a terminal, so ship cannot ask. Pass --yes to deploy without asking.');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(`${question} [y/N] `);
-    rl.close();
-    return /^y(es)?$/i.test(answer.trim());
-}
-async function ask(question) {
-    if (!process.stdin.isTTY)
-        throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(`${question} `);
-    rl.close();
-    return answer;
-}
 // The repo being worked on, so a GitHub refusal can name its owner.
 let current;
 async function ownerOf(client) {
@@ -74,6 +59,11 @@ async function ownerOf(client) {
             return ownerFromCodeowners(text);
     }
     return undefined;
+}
+// package.json sits one folder above both src/ and dist/.
+function shipVersion() {
+    const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    return version;
 }
 async function main() {
     const { values, positionals } = parseArgs({
@@ -88,8 +78,13 @@ async function main() {
             component: { type: 'string' },
             n: { type: 'string', short: 'n', default: '10' },
             help: { type: 'boolean', short: 'h', default: false },
+            version: { type: 'boolean', default: false },
         },
     });
+    if (values.version) {
+        console.log(shipVersion());
+        return 0;
+    }
     const [first, ...rest] = positionals;
     if (values.help || !first || first === 'help') {
         console.log(HELP);

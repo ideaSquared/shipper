@@ -1,4 +1,8 @@
-# Moves the v1 tag. Product repos that still call shipper at @v1 pick up whatever v1 points at, with the
+# Releases shipper: tags the package.json version as an annotated vX.Y.Z with a GitHub Release (notes
+# generated from the merged pull requests, whose titles are Conventional Commits), then moves the v1 tag.
+# Bump `version` in package.json (1.x.y) in the PR that is to be released; a version already tagged on another
+# commit is refused, and a re-run after a failed release reuses the tag. Product repos that still call shipper at
+# @v1 pick up whatever v1 points at, with the
 # Cloudflare token in reach, so v1 moves only here: by hand (Actions > Release > Run workflow), and only
 # after a reviewer approves the `release` GitHub Environment (Settings > Environments > release: required
 # reviewers, ideally limited to the main branch). CI never moves it.
@@ -27,7 +31,7 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -60,6 +64,22 @@ jobs:
       # A breaking change (a `type!:` subject, or a footer line starting `BREAKING CHANGE:` or
       # `BREAKING-CHANGE:`, in any commit between v1 and this one) must not move v1; it needs a new major
       # tag by hand. Only line starts count, so a message that just mentions breaking changes still releases.
+      # The version in package.json is what the tag and the GitHub Release are named after.
+      - name: Check the version is a new 1.x.y
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          version="$(git show "$SHA:package.json" | jq -r .version)"
+          if ! grep -qE '^1\.[0-9]+\.[0-9]+$' <<<"$version"; then
+            echo "::error::package.json version is '$version'; a release moving v1 needs a 1.x.y version."
+            exit 1
+          fi
+          # A tag already on this very commit is a retry (the Release failed after pushing it): allowed.
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null \
+            && [ "$(git rev-parse "refs/tags/v$version^{commit}")" != "$SHA" ]; then
+            echo "::error::v$version already exists on another commit. Bump version in package.json in the pull request to release."
+            exit 1
+          fi
       - name: Refuse a breaking change
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
@@ -82,9 +102,32 @@ jobs:
       group: release-v1
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+      - name: Tag the version and publish a GitHub Release
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(git show "$SHA:package.json" | jq -r .version)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already pushed; reusing it."
+          else
+            git tag -a "v$version" -m "shipper v$version" "$SHA"
+            git push origin "refs/tags/v$version"
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "The GitHub Release for v$version already exists."
+          else
+            # The notes start at the newest earlier vX.Y.Z release tag: never the moving v1 tag, and
+            # never v$version itself when this is a retry. No earlier release: GitHub's default.
+            previous="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -vx "v$version" | head -n 1 || true)"
+            gh release create "v$version" --verify-tag --title "v$version" --generate-notes ${previous:+--notes-start-tag "$previous"}
+          fi
+          echo "v$version published at $SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Move v1 to the commit
         env:
           SHA: ${{ needs.verify.outputs.sha }}

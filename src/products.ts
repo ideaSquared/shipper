@@ -98,9 +98,7 @@ export function resolveRepo(choice: RepoChoice): string {
   }
   const fromRemote = choice.remote ? repoFromRemote(choice.remote) : undefined;
   if (fromRemote) return fromRemote;
-  throw new Error(
-    `Which product? Name one (${Object.keys(activeProducts()).join(', ')}), pass --repo owner/name, or run inside the repo.`,
-  );
+  throw new Error(`Which product? Name one (${Object.keys(activeProducts()).join(', ')}), pass --repo owner/name, or run inside the repo.`);
 }
 
 // The product and environment named on the command line, in either order:
@@ -110,4 +108,3 @@ export function parseTarget(args: readonly string[]): { product?: string; enviro
   const environment = args.find((arg) => arg !== product);
   return { product, environment };
 }
-
