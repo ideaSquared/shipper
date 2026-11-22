@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
-    "prepare": "node scripts/prepare.mjs"
+    "hooks:install": "node scripts/install-hooks.mjs"
   },
   "dependencies": {
     "yaml": "^2.8.1",

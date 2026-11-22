@@ -446,8 +446,8 @@ github-actions`) updates the `uses:` pin and its version comment for you; it doe
 
 Releases are SemVer. The release PR bumps `version` in `package.json` (1.x.y while `v1` is the line) and
 adds a `CHANGELOG.md` entry; the Release workflow then tags that version as an annotated `vX.Y.Z`,
-publishes a GitHub Release with generated notes, and moves `v1`. A version that already has a tag is
-refused.
+publishes a GitHub Release with generated notes, and moves `v1`. A version already tagged on another commit is
+refused; re-running after a failed release reuses the tag.
 
 Callers that still use `@v1` keep working, but they take whatever `v1` points at. `v1` moves only by an
 approved manual release: Actions > Release > Run workflow (optionally a full commit SHA; empty means the
@@ -467,6 +467,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build    # dist/ is committed
+pnpm hooks:install   # once: the commit-msg hook that runs commitlint
 ```
 
 The scripts are TypeScript run directly by Node 24 (type stripping), so there is no build
