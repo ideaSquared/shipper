@@ -463,6 +463,26 @@ not on `main`, or whose CI `test` job has not passed.
 A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag instead. Mark it in the commit
 (`feat!: …` or a `BREAKING CHANGE:` footer): the release run refuses to move `v1` over it; create `v2` by hand.
 
+### Releasing a new shipper version
+
+1. Merge the change PR with `version` bumped in `package.json` and an entry in `CHANGELOG.md`. A
+   breaking change (`feat!:` or a `BREAKING CHANGE:` footer) is a new major: create `v2` by hand, because
+   the release run refuses to move `v1` over it.
+2. Run Actions > Release > Run workflow and approve the `release` environment. It tags `vX.Y.Z`, publishes
+   the GitHub Release and moves `v1`. Re-running after a failure reuses the tag.
+3. Product repos: Dependabot's `github-actions` update opens a PR that bumps the `uses:` SHA. The
+   "shipper pins match" check in their `ci.yml` fails until `shipper-ref` is the same SHA. The Dependency
+   sweep (a scheduled task outside this repo) pushes that fix, unless the CHANGELOG lists a breaking change
+   or a new required `ship.yaml` key or input; then it comments what to change by hand. Merge those PRs. A
+   repo that deploys on merge uses the new shipper from its next merge: `ideasquared-website` (staging,
+   then production in the same run), `creatrgrid` (staging; production by hand), `ideasquared-bot` and
+   `agent-idea` (production). Others, such as `pairflix`, deploy only when someone runs `ship deploy`.
+4. Developer machines: `eng` updates `ship`, `idea` and `eng` on every run, and `ship --version` shows the
+   version. If it is old, run `pnpm setup` (pnpm 11.15.1 or newer) and check `Get-Command ship -All` or
+   `which -a ship` for a stale copy.
+5. A bad shipper release: revert the change in shipper and release a new patch version. Product repos keep
+   their old SHA pin until they merge the bump PR, so nothing moves without a PR.
+
 ## Development
 
 ```bash
