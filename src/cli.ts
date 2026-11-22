@@ -40,6 +40,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship doctor [product] [env]        check the deploy setup before deploying (exit 1 if something fails)
 
 Options:
+  --version           print the installed version
   --repo owner/name   a repo not in the product list
   -y, --yes           don't ask before deploying or rolling back (production still asks
                       for the product name)
@@ -89,6 +90,12 @@ async function ownerOf(client: ReturnType<typeof createGitHubClient>): Promise<s
   return undefined;
 }
 
+// package.json sits one folder above both src/ and dist/.
+function shipVersion(): string {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  return version;
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -102,8 +109,13 @@ async function main(): Promise<number> {
       component: { type: 'string' },
       n: { type: 'string', short: 'n', default: '10' },
       help: { type: 'boolean', short: 'h', default: false },
+      version: { type: 'boolean', default: false },
     },
   });
+  if (values.version) {
+    console.log(shipVersion());
+    return 0;
+  }
   const [first, ...rest] = positionals;
   if (values.help || !first || first === 'help') {
     console.log(HELP);

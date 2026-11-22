@@ -11,6 +11,7 @@ check and rollback, Discord message), and the `ship` command-line tool.
 
 ```bash
 pnpm add -g github:ideaSquared/shipper     # install or update
+ship --version                             # which version is installed
 ```
 
 ```bash
