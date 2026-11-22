@@ -21,6 +21,12 @@ describe('resolveRepo', () => {
     expect(resolveRepo({ product: 'agent-idea' })).toBe('ideaSquared/agent-idea');
   });
 
+  it('knows ideasquared-website', () => {
+    expect(resolveRepo({ product: 'ideasquared-website' })).toBe('ideaSquared/ideasquared-website');
+    expect(productForRepo('ideaSquared/ideasquared-website')).toBe('ideasquared-website');
+    expect(activeProducts()).toHaveProperty('ideasquared-website');
+  });
+
   it('explains what to do when it cannot tell', () => {
     expect(() => resolveRepo({ product: 'nope' })).toThrow("Unknown product 'nope'");
     expect(() => resolveRepo({})).toThrow('Which product?');
@@ -44,12 +50,14 @@ describe('retired products', () => {
 
   it('leaves retired products out of the active list', () => {
     expect(activeProducts()).not.toHaveProperty('gaminginit');
-    expect(activeProducts()).toHaveProperty('gaminginit-bot', 'ideaSquared/gaminginit-bot');
+    expect(activeProducts()).not.toHaveProperty('gaminginit-bot');
+    expect(activeProducts()).toHaveProperty('ads', 'ideaSquared/adopt-dont-shop');
   });
 
   it('refuses to deploy or roll back a retired product, saying why', () => {
     expect(() => assertShippable('gaminginit')).toThrow(/gaminginit is retired \(.+\)\. Nothing to ship\./);
-    expect(() => assertShippable('gaminginit-bot')).not.toThrow();
+    expect(() => assertShippable('gaminginit-bot')).toThrow(/gaminginit-bot is retired/);
+    expect(() => assertShippable('ads')).not.toThrow();
     expect(() => assertShippable(undefined)).not.toThrow();
   });
 

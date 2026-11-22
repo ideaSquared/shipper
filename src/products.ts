@@ -33,10 +33,15 @@ export const PRODUCTS: Readonly<Record<string, Product>> = {
   'gaminginit-bot': {
     repo: 'ideaSquared/gaminginit-bot',
     description: 'GamingInit Discord bot',
+    retired: 'deprecated November 2026',
   },
   'ideasquared-bot': {
     repo: 'ideaSquared/ideasquared-bot',
     description: 'ideaSquared Discord bot: deploy messages and the live board',
+  },
+  'ideasquared-website': {
+    repo: 'ideaSquared/ideasquared-website',
+    description: 'ideaSquared studio website',
   },
 };
 
