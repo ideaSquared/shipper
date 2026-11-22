@@ -26,4 +26,9 @@ describe('the ship command line', () => {
       expect(result.stdout).toContain('Options:');
     }
   });
+
+  it('prints no colour when NO_COLOR is set', () => {
+    const result = ship(['--help'], { NO_COLOR: '1', FORCE_COLOR: '1' });
+    expect(result.stdout).not.toContain('\u001b[');
+  });
 });
