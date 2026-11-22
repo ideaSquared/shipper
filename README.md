@@ -14,18 +14,23 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ship --version                             # which version is installed
 ```
 
+With pnpm 11 the global bin directory is `PNPM_HOME\bin` (`$PNPM_HOME/bin` outside Windows). If
+`ship` is not found, or `ship --version` prints an old or unknown version, run `pnpm setup` (pnpm 11.15.1
+or newer) and open a new terminal. An older copy earlier on the PATH can shadow the new one: list every
+copy with `Get-Command ship -All` (PowerShell) or `which -a ship`, and remove the stale one.
+
 ```bash
 ship status all                            # every product: what is live, and how far behind its default branch
-ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
-ship diff gaminginit-bot                   # the commits waiting to ship (and any new migrations)
-ship log gaminginit-bot -n 10              # recent deploys and their state
-ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
-ship production gaminginit-bot             # same as deploy
-ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
-ship freeze gaminginit-bot production --reason "db incident"   # block deploys, with a reason everyone sees
-ship unfreeze gaminginit-bot production    # lift it (no environment: lift everything)
-ship doctor gaminginit-bot [production]    # check the deploy setup before anyone deploys
-ship logs gaminginit-bot staging           # stream live logs (wrangler tail) of a deployed environment
+ship status creatrgrid                     # one product: what is live in each environment, and how far behind main
+ship diff creatrgrid                       # the commits waiting to ship (and any new migrations)
+ship log creatrgrid -n 10                  # recent deploys and their state
+ship deploy creatrgrid production          # check, confirm, start the deploy and follow it
+ship production creatrgrid                 # same as deploy
+ship rollback creatrgrid production        # put back the commit that was live before, and follow it
+ship freeze creatrgrid production --reason "db incident" # block deploys, with a reason everyone sees
+ship unfreeze creatrgrid production        # lift it (no environment: lift everything)
+ship doctor creatrgrid [production]        # check the deploy setup before anyone deploys
+ship logs creatrgrid staging           # stream live logs (wrangler tail) of a deployed environment
 ship logs staging --component api          # just one component
 ```
 
