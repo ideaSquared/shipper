@@ -1,11 +1,13 @@
 // What `ship status | diff | log | deploy` do. The CLI wires in GitHub, the terminal and the clock.
 import { describeFreeze, freezeFailure, readFreeze } from "./freeze.js";
-import { checkProblems, evaluateGate } from "./gate.js";
+import { checkProblems, checkState, evaluateGate } from "./gate.js";
 import { GitHubApiError, isAccessError } from "./github.js";
 import { pendingMigrations } from "./migrations.js";
 import { parseManifest } from "./manifest.js";
 import { accessHint, RATE_LIMIT_HINT } from "./products.js";
+import { formatDuration, onlyWaiting, waitingFor } from "./queue.js";
 import { plain } from "./style.js";
+export { formatDuration } from "./queue.js";
 export const DEFAULT_ROLLBACK_WORKFLOW = 'ship-rollback.yml';
 const short = (sha) => sha.slice(0, 7);
 // The environment real users are on. Changing it takes a second, typed confirmation.
@@ -84,7 +86,7 @@ async function warnIfBlocked(ctx, environments) {
         if (failures.length > 0 && waiting.length === failures.length) {
             ctx.print(`⏳ ${s.warn(`${short(head)} can't ship yet, ${waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
             failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-            ctx.print(`   ${s.dim('Wait for it before running ship deploy.')}`);
+            ctx.print(`   ${s.dim(`A deploy started now is queued until ${waiting.length === 1 ? 'it passes' : 'they pass'}.`)}`);
         }
         else if (failures.length > 0) {
             ctx.print(`⛔ ${s.bad(`${short(head)} would be blocked by the gate:`)}`);
@@ -244,12 +246,6 @@ export function currentStep(job) {
         return undefined;
     return job.steps?.find((step) => step.status === 'in_progress')?.name;
 }
-export function formatDuration(ms) {
-    const total = Math.max(0, Math.round(ms / 1000));
-    const minutes = Math.floor(total / 60);
-    const seconds = total % 60;
-    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
 const HEARTBEAT_MS = 60_000;
 function jobLine(job, s) {
     const result = job.conclusion ?? job.status;
@@ -280,6 +276,9 @@ export async function deploy(ctx, environment, options) {
         client.deployedTo(head, requires),
         client.lastSuccessfulDeployment(env),
     ]);
+    // A `requires` environment without the commit may be deploying it right now: then the deploy can queue behind it.
+    const notYet = requires.filter((required) => !deployedTo.includes(required));
+    const deployingTo = notYet.length > 0 ? await client.deployingTo(head, notYet) : [];
     // Unknown history never blocks a deploy: if GitHub can't compare, warn and carry on.
     const unknown = (what) => (error) => {
         ctx.print(`⚠️  ${s.warn(`Could not ${what}: ${error instanceof Error ? error.message : String(error)}`)}`);
@@ -292,15 +291,14 @@ export async function deploy(ctx, environment, options) {
         onDefaultBranch: true,
         checkRuns,
         deployedTo,
+        deployingTo,
         live: live && relation ? { sha: live, relation } : undefined,
     });
-    if (!gate.ok && gate.waiting.length === gate.failures.length) {
-        ctx.print(`⏳ ${s.warn(`${short(head)} can't ship to ${env} yet, ${gate.waiting.length === 1 ? 'a check is' : 'checks are'} still running:`)}`);
-        gate.failures.forEach((failure) => ctx.print(`   • ${s.warn(failure)}`));
-        ctx.print(`   ${s.dim('Its result is not known yet. Run the same deploy again once it passes.')}`);
-        return 1;
+    const queued = onlyWaiting(gate);
+    if (queued) {
+        ctx.print(`⏳ ${s.warn(`${short(head)} will be queued: the deploy waits for ${waitingFor(gate.waiting, gate.deploying)} to pass first.`)}`);
     }
-    if (!gate.ok) {
+    else if (!gate.ok) {
         ctx.print(`⛔ ${s.bad(`Can't ship ${short(head)} to ${env}:`)}`);
         gate.failures.forEach((failure) => ctx.print(`   • ${s.bad(failure)}`));
         return 1;
@@ -328,12 +326,22 @@ export async function deploy(ctx, environment, options) {
     const since = options.now();
     ctx.print(`📨 ${s.dim(`Starting ${workflow} on ${ctx.defaultBranch}…`)}`);
     await client.dispatchWorkflow(workflow, ctx.defaultBranch, environmentInput ? { [environmentInput]: env } : {});
-    return followRun(ctx, workflow, since, options, `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`);
+    if (queued) {
+        ctx.print(`🕒 ${s.warn(`Queued. The workflow's gate waits for ${waitingFor(gate.waiting, gate.deploying)} (30 minutes by default), then deploys.`)}`);
+    }
+    return followRun(ctx, workflow, since, options, `🚀 ${s.ok(`Shipped ${short(head)} to ${env}.`)}`, queued ? gate.waiting : []);
+}
+// The line for a check the queued deploy was waiting on and is no longer: it passed, or it didn't.
+function checkDone(name, runs, s) {
+    return checkState(name, runs) === 'passed' ? `   ✅ ${s.ok(`check '${name}' passed`)}` : `   ❌ ${s.bad(`check '${name}' did not pass`)}`;
 }
 // Finds the run a dispatch started at `since`, prints each job as it changes, and ends with
-// `shipped` or the failure. 0 when the run succeeded (or isn't being waited for).
-async function followRun(ctx, workflow, since, options, shipped) {
+// `shipped` or the failure. 0 when the run succeeded (or isn't being waited for). `queuedOn` names the
+// checks a queued deploy waits on: until they finish, it also says which are still running.
+async function followRun(ctx, workflow, since, options, shipped, queuedOn = []) {
     const { client, style: s } = ctx;
+    // Ctrl-C only stops this terminal following; the run on GitHub goes on.
+    const listen = (where) => options.onInterrupt?.(() => ctx.print(`🛑 ${s.warn('Stopped following. The deploy keeps going on GitHub:')} ${s.link(where)}`));
     const findRun = async (attempt) => {
         const run = await client.findDispatchedRun(workflow, since);
         if (run || attempt >= (options.findRunAttempts ?? 20))
@@ -342,7 +350,8 @@ async function followRun(ctx, workflow, since, options, shipped) {
         return findRun(attempt + 1);
     };
     ctx.print(`⏳ ${s.dim('Waiting for GitHub to start the run…')}`);
-    const started = await findRun(1);
+    const stopFinding = listen(`https://github.com/${ctx.repo}/actions`);
+    const started = await findRun(1).finally(() => stopFinding?.());
     if (!started) {
         ctx.print(`⏳ Started, but the run hasn't appeared yet. Check ${s.link(`https://github.com/${ctx.repo}/actions`)}`);
         return 0;
@@ -352,11 +361,24 @@ async function followRun(ctx, workflow, since, options, shipped) {
         return 0;
     // Elapsed time counts from the dispatch; the heartbeat's quiet clock starts at the "Started" line.
     const begun = since.getTime();
-    // seen: each job's last printed state and step. quietSince: when anything was last printed.
-    const follow = async (seen, quietSince) => {
+    const waitingLine = (checks, now) => `   ⏳ ${s.warn(`Waiting for ${waitingFor(checks, [])}`)} ${s.dim(`· ${formatDuration(now - begun)}`)}`;
+    // The checks still running, and a line for each one that finished since the last look.
+    const checksNow = async (pending) => {
+        if (pending.length === 0)
+            return { pending, lines: [] };
+        const runs = await client.checkRuns(ctx.head).catch(() => undefined);
+        if (!runs)
+            return { pending, lines: [] };
+        const still = pending.filter((name) => checkState(name, runs) === 'running');
+        return { pending: still, lines: pending.filter((name) => !still.includes(name)).map((name) => checkDone(name, runs, s)) };
+    };
+    // seen: each job's last printed state and step. quietSince: when anything was last printed. pending: checks still running.
+    const follow = async (seen, quietSince, pending) => {
         await options.sleep(options.pollMs ?? 10_000);
-        const [run, jobs] = await Promise.all([client.run(started.id), client.jobs(started.id)]);
-        const lines = jobs.flatMap((job) => {
+        const [run, jobs, checks] = await Promise.all([client.run(started.id), client.jobs(started.id), checksNow(pending)]);
+        const now = options.now().getTime();
+        const checkLines = [...checks.lines, ...(checks.lines.length > 0 && checks.pending.length > 0 ? [waitingLine(checks.pending, now)] : [])];
+        const jobLines = jobs.flatMap((job) => {
             const state = job.conclusion ?? job.status;
             const step = currentStep(job);
             const [prevState, prevStep] = (seen.get(job.name) ?? '').split('\u0000');
@@ -364,19 +386,22 @@ async function followRun(ctx, workflow, since, options, shipped) {
                 return [jobLine(job, s), ...(step ? [`      ↳ ${step}`] : [])];
             return step && step !== prevStep ? [`      ↳ ${job.name} › ${step}`] : [];
         });
+        const lines = [...checkLines, ...jobLines];
         lines.forEach((line) => ctx.print(line));
-        const now = options.now().getTime();
-        const running = jobs.flatMap((job) => {
-            const step = currentStep(job);
-            return step ? [`${job.name} › ${step}`] : job.status === 'in_progress' ? [job.name] : [];
-        });
+        const running = [
+            ...(checks.pending.length > 0 ? [`waiting for ${waitingFor(checks.pending, [])}`] : []),
+            ...jobs.flatMap((job) => {
+                const step = currentStep(job);
+                return step ? [`${job.name} › ${step}`] : job.status === 'in_progress' ? [job.name] : [];
+            }),
+        ];
         const heartbeat = lines.length === 0 && run.status !== 'completed' && now - quietSince >= HEARTBEAT_MS;
         if (heartbeat) {
             ctx.print(`   ⏱️  ${s.dim(`Still running · ${formatDuration(now - begun)}${running.length > 0 ? ` · ${running.join(', ')}` : ''}`)}`);
         }
         const next = new Map(jobs.map((job) => [job.name, `${job.conclusion ?? job.status}\u0000${currentStep(job) ?? ''}`]));
         if (run.status !== 'completed')
-            return follow(next, lines.length > 0 || heartbeat ? now : quietSince);
+            return follow(next, lines.length > 0 || heartbeat ? now : quietSince, checks.pending);
         const took = s.dim(`(${formatDuration(now - begun)})`);
         if (run.conclusion !== 'success') {
             jobs
@@ -389,7 +414,10 @@ async function followRun(ctx, workflow, since, options, shipped) {
         ctx.print(run.conclusion === 'success' ? `${shipped} ${took}` : `💥 ${s.bad(`Deploy ${run.conclusion ?? 'ended'}:`)} ${s.link(run.url)} ${took}`);
         return run.conclusion === 'success' ? 0 : 1;
     };
-    return follow(new Map(), options.now().getTime());
+    if (queuedOn.length > 0)
+        ctx.print(waitingLine(queuedOn, options.now().getTime()));
+    const stopFollowing = listen(started.url);
+    return follow(new Map(), options.now().getTime(), queuedOn).finally(() => stopFollowing?.());
 }
 const wasLive = (deployment) => deployment.state === 'success' || deployment.state === 'inactive';
 // The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest

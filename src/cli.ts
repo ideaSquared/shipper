@@ -31,7 +31,7 @@ const HELP = `🚢 ship: deploy ideaSquared products
   ship status [product]              what is live in each environment (no product: every product)
   ship diff [product] [env]          commits waiting to ship
   ship log [product] [env] [-n 10]   recent deploys
-  ship deploy [product] [env]        check, confirm, start the deploy and follow it
+  ship deploy [product] [env]        check, confirm, start the deploy and follow it (queued while checks run)
   ship <env> [product]               same as deploy
   ship logs [product] [env]          stream live logs of a deployed environment (inside the checkout; --component <name>)
   ship rollback [product] [env]      put back the commit that was live before (--to <sha> for another)
@@ -44,7 +44,7 @@ Options:
   --repo owner/name   a repo not in the product list
   -y, --yes           don't ask before deploying or rolling back (production still asks
                       for the product name)
-  --no-wait           start the deploy and exit
+  --no-wait           start the deploy and exit (Ctrl-C while following does the same)
   --redeploy          deploy even if that commit is already live
   --reason "…"        freeze: why, shown to everyone who tries to deploy
   --to <sha>          rollback: the earlier live commit to put back (7+ characters)
@@ -144,7 +144,18 @@ async function main(): Promise<number> {
   if (command === 'status') return status(ctx);
   if (command === 'diff') return diff(ctx, environment);
   if (command === 'log') return log(ctx, environment, Number(values.n) || 10);
-  const run = { yes: values.yes, wait: !values['no-wait'], confirm, ask, now: () => new Date(), sleep: (ms: number) => sleep(ms) };
+  // Ctrl-C while following a run: say the run goes on, then exit (130 is the usual code for SIGINT).
+  const onInterrupt = (stop: () => void) => {
+    const handler = () => {
+      stop();
+      process.exit(130);
+    };
+    process.once('SIGINT', handler);
+    return () => {
+      process.off('SIGINT', handler);
+    };
+  };
+  const run = { yes: values.yes, wait: !values['no-wait'], confirm, ask, now: () => new Date(), sleep: (ms: number) => sleep(ms), onInterrupt };
   // "all" is what an omitted environment means.
   const frozenEnvironment = environment === 'all' ? undefined : environment;
   if (command === 'freeze') return freeze(ctx, frozenEnvironment, { ...run, reason: values.reason });

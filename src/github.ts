@@ -6,6 +6,8 @@ export type GitHubClient = {
   isOnBranch(sha: string, branch: string): Promise<boolean>;
   checkRuns(sha: string): Promise<CheckRun[]>;
   deployedTo(sha: string, environments: readonly string[]): Promise<string[]>;
+  // Environments a deploy of `sha` is under way in: its newest deployment there has not finished yet.
+  deployingTo(sha: string, environments: readonly string[]): Promise<string[]>;
   // SHA of the newest deployment to the environment that reached success, if any.
   lastSuccessfulDeployment(environment: string): Promise<string | undefined>;
   compare(base: string, head: string): Promise<Comparison>;
@@ -106,6 +108,8 @@ const CheckRunsSchema = z.object({
 });
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
+// Deployment states that mean a deploy has started and not finished. No status at all is `pending` too.
+const UNFINISHED = new Set(['pending', 'queued', 'waiting', 'in_progress']);
 
 const RepoSchema = z.object({ default_branch: z.string() });
 const CommitSchema = z.object({ sha: z.string() });
@@ -390,6 +394,18 @@ export function createGitHubClient(repository: string, token: string | undefined
     },
     async deployedTo(sha, environments) {
       const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));
+      return environments.filter((_, index) => results[index]);
+    },
+    async deployingTo(sha, environments) {
+      const results = await Promise.all(
+        environments.map(async (environment) => {
+          // Newest first, so one deployment and its latest status are enough.
+          const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DeploymentsSchema);
+          if (!newest) return false;
+          const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, StatusesSchema);
+          return UNFINISHED.has(latest?.state ?? 'pending');
+        }),
+      );
       return environments.filter((_, index) => results[index]);
     },
   };

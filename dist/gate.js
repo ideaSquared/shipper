@@ -24,14 +24,25 @@ export function liveFailure(facts, environment) {
         return undefined;
     return `${facts.sha.slice(0, 7)} was never live on ${environment}, so it can't be a rollback target`;
 }
-function checkVerdict(name, runs) {
+// Where one named check stands on a commit. A passing re-run beats an earlier failure.
+export function checkState(name, runs) {
     const matching = runs.filter((run) => run.name === name);
-    if (matching.length === 0) {
+    if (matching.length === 0)
+        return 'missing';
+    if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success'))
+        return 'passed';
+    if (matching.some((run) => run.status !== 'completed'))
+        return 'running';
+    return 'failed';
+}
+function checkVerdict(name, runs) {
+    const state = checkState(name, runs);
+    if (state === 'missing') {
         return { failure: `check '${name}' has not run on this commit. Check the commit is on the default branch, then deploy again.` };
     }
-    if (matching.some((run) => run.status === 'completed' && run.conclusion === 'success'))
+    if (state === 'passed')
         return {};
-    if (matching.some((run) => run.status !== 'completed')) {
+    if (state === 'running') {
         return { failure: `check '${name}' is still running, so its result is not known yet. Deploy again once it passes.`, waiting: name };
     }
     return {
@@ -48,15 +59,35 @@ export function checkProblems(names, runs) {
 export function evaluateGate(manifest, environment, facts) {
     const env = environmentOf(manifest, environment);
     const short = facts.sha.slice(0, 7);
-    const checks = checkProblems(manifest.checks, facts.checkRuns);
-    const failures = [
-        facts.onDefaultBranch ? undefined : `${short} is not on ${facts.defaultBranch}. Merge it to ${facts.defaultBranch} first: only the default branch deploys.`,
-        facts.rollback ? undefined : freezeFailure(facts.freeze, environment, manifest.product),
-        liveFailure({ ...facts, product: manifest.product }, environment),
-        ...checks.failures,
-        ...env.requires
-            .filter((required) => !facts.deployedTo.includes(required))
-            .map((required) => `${short} has not been deployed successfully to ${required}. Deploy it to ${required} first (ship deploy ${manifest.product} ${required}).`),
-    ].filter((failure) => failure !== undefined);
-    return { ok: failures.length === 0, failures, waiting: checks.waiting };
+    const hard = (message) => (message ? [{ message, waits: false }] : []);
+    const missing = env.requires.filter((required) => !facts.deployedTo.includes(required));
+    const deploying = missing.filter((required) => facts.deployingTo?.includes(required) ?? false);
+    const problems = [
+        ...hard(facts.onDefaultBranch
+            ? undefined
+            : `${short} is not on ${facts.defaultBranch}. Merge it to ${facts.defaultBranch} first: only the default branch deploys.`),
+        ...hard(facts.rollback ? undefined : freezeFailure(facts.freeze, environment, manifest.product)),
+        ...hard(liveFailure({ ...facts, product: manifest.product }, environment)),
+        ...manifest.checks.flatMap((name) => {
+            const verdict = checkVerdict(name, facts.checkRuns);
+            return verdict.failure ? [{ message: verdict.failure, waits: verdict.waiting !== undefined }] : [];
+        }),
+        ...missing.map((required) => {
+            if (deploying.includes(required)) {
+                return { message: `${short} is being deployed to ${required} right now. ${environment} can follow once that deploy succeeds.`, waits: true };
+            }
+            return {
+                message: `${short} has not been deployed successfully to ${required}. Deploy it to ${required} first (ship deploy ${manifest.product} ${required}).`,
+                waits: false,
+            };
+        }),
+    ];
+    const failures = problems.map((problem) => problem.message);
+    return {
+        ok: failures.length === 0,
+        failures,
+        waiting: checkProblems(manifest.checks, facts.checkRuns).waiting,
+        deploying,
+        hard: problems.filter((problem) => !problem.waits).map((problem) => problem.message),
+    };
 }

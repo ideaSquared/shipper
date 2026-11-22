@@ -26,7 +26,7 @@ const passing: GateFacts = {
 
 describe('evaluateGate', () => {
   it('lets a commit through when every rule holds', () => {
-    expect(evaluateGate(manifest, 'production', passing)).toEqual({ ok: true, failures: [], waiting: [] });
+    expect(evaluateGate(manifest, 'production', passing)).toEqual({ ok: true, failures: [], waiting: [], deploying: [], hard: [] });
   });
 
   it('blocks a commit that is not on the default branch', () => {
@@ -68,6 +68,27 @@ describe('evaluateGate', () => {
     expect(result.failures).toEqual(['abcdef1 has not been deployed successfully to staging. Deploy it to staging first (ship deploy creatrgrid staging).']);
   });
 
+  it('tells waiting blockers (running checks, a requires deploy under way) from failures waiting cannot fix', () => {
+    const queued = evaluateGate(manifest, 'production', {
+      ...passing,
+      checkRuns: [
+        { name: 'verify', status: 'completed', conclusion: 'success' },
+        { name: 'e2e', status: 'queued', conclusion: null },
+      ],
+      deployedTo: [],
+      deployingTo: ['staging'],
+    });
+    expect(queued.ok).toBe(false);
+    expect(queued.waiting).toEqual(['e2e']);
+    expect(queued.deploying).toEqual(['staging']);
+    expect(queued.hard).toEqual([]);
+    expect(queued.failures).toContain('abcdef1 is being deployed to staging right now. production can follow once that deploy succeeds.');
+
+    const stale = evaluateGate(manifest, 'production', { ...passing, onDefaultBranch: false, deployedTo: [], deployingTo: ['staging'] });
+    expect(stale.hard).toEqual(['abcdef1 is not on main. Merge it to main first: only the default branch deploys.']);
+    expect(stale.deploying).toEqual(['staging']);
+  });
+
   it('does not ask staging to have been deployed before staging', () => {
     expect(evaluateGate(manifest, 'staging', { ...passing, deployedTo: [] }).ok).toBe(true);
   });
@@ -87,7 +108,13 @@ describe('evaluateGate', () => {
   it('lets a rollback put back an older commit, but only one that was live on that environment', () => {
     const LIVE = 'fedcba9876543210fedcba9876543210fedcba98';
     const older = { ...passing, live: { sha: LIVE, relation: 'behind' }, rollback: true };
-    expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({ ok: true, failures: [], waiting: [] });
+    expect(evaluateGate(manifest, 'production', { ...older, deployedTo: ['staging', 'production'] })).toEqual({
+      ok: true,
+      failures: [],
+      waiting: [],
+      deploying: [],
+      hard: [],
+    });
     expect(evaluateGate(manifest, 'production', older).failures).toEqual(["abcdef1 was never live on production, so it can't be a rollback target"]);
   });
 

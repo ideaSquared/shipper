@@ -4,6 +4,18 @@ All notable changes are listed here, following [Keep a Changelog](https://keepac
 and [Semantic Versioning](https://semver.org/). The release PR adds the entry and bumps `version` in
 `package.json`; the Release workflow then tags `vX.Y.Z`, publishes the GitHub Release and moves `v1`.
 
+## [1.1.0] - Unreleased
+
+### Added
+
+- Queued deploys. When the only things blocking a deploy are `checks:` still running, or a `requires`
+  environment the commit is being deployed to right now, the gate in `deploy.yml` and `gate.yml` waits for
+  them instead of failing. It goes on as soon as they pass, and fails as soon as a check fails or when the
+  time runs out. The new `wait-minutes` input sets the limit (default 30; `0` fails at once, as before).
+- `ship deploy` no longer refuses while checks are only running: it starts the workflow, says the deploy is
+  queued and what it waits for, and shows which checks are still running before following the jobs.
+- Ctrl-C while `ship deploy` or `ship rollback` follows a run says the run keeps going, with its link.
+
 ## [1.0.0] - Unreleased
 
 First tagged release of the `ship` command and the reusable workflows (`deploy.yml`, `gate.yml`,
