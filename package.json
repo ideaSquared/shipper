@@ -6,7 +6,7 @@
   "description": "Deploy tooling for every ideaSquared product: a ship.yaml manifest and a reusable GitHub Actions workflow.",
   "type": "module",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=24.0.0 <25.0.0"
   },
   "packageManager": "pnpm@10.34.3",
   "scripts": {
@@ -19,7 +19,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^22.20.4",
+    "@types/node": "^24.0.0",
     "typescript": "~5.9.3",
     "vitest": "^5.0.2"
   },
