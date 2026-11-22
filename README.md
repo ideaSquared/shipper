@@ -462,8 +462,11 @@ A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag inst
 
 ```bash
 pnpm install
-pnpm test
+pnpm format:check
+pnpm lint
 pnpm typecheck
+pnpm test
+pnpm build    # dist/ is committed
 ```
 
 The scripts are TypeScript run directly by Node 24 (type stripping), so there is no build

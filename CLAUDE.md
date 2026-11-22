@@ -4,7 +4,7 @@ shipper is the deploy tooling for every ideaSquared product: the `ship` CLI and 
 
 ## Working rules
 
-- TypeScript strict, no `any`. Run `pnpm typecheck` and `pnpm test` before you call a change done.
+- TypeScript strict, no `any`. Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck` and `pnpm test` before you call a change done.
 - Run `pnpm build` and commit `dist/`: it is what `pnpm add -g github:ideaSquared/shipper` installs, and CI fails if it differs from `src/`.
 - Conventional commits (`feat:`, `fix:`, `chore:` ...), one change per PR, tests with behaviour changes.
 
