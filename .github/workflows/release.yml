@@ -108,6 +108,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(git show "$SHA:package.json" | jq -r .version)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$version" -m "shipper v$version" "$SHA"
           git push origin "refs/tags/v$version"
           gh release create "v$version" --verify-tag --title "v$version" --generate-notes
