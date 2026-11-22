@@ -31,3 +31,14 @@ jobs:
             echo "::error::dist/ is out of date. Run pnpm build and commit it."
             exit 1
           fi
+      # What a user gets from the packed repo: install the tarball globally and run it.
+      - name: packed CLI installs and runs
+        run: |
+          pnpm pack --pack-destination "$RUNNER_TEMP/pack"
+          npm install --global --prefix "$RUNNER_TEMP/global" "$RUNNER_TEMP"/pack/*.tgz
+          installed="$("$RUNNER_TEMP/global/bin/ship" --version)"
+          expected="$(node -p "require('./package.json').version")"
+          if [ "$installed" != "$expected" ]; then
+            echo "::error::ship --version printed '$installed', expected '$expected'."
+            exit 1
+          fi
