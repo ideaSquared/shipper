@@ -122,7 +122,10 @@ jobs:
           if gh release view "v$version" >/dev/null 2>&1; then
             echo "The GitHub Release for v$version already exists."
           else
-            gh release create "v$version" --verify-tag --title "v$version" --generate-notes
+            # The notes start at the newest earlier vX.Y.Z release tag: never the moving v1 tag, and
+            # never v$version itself when this is a retry. No earlier release: GitHub's default.
+            previous="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -vx "v$version" | head -n 1 || true)"
+            gh release create "v$version" --verify-tag --title "v$version" --generate-notes ${previous:+--notes-start-tag "$previous"}
           fi
           echo "v$version published at $SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Move v1 to the commit
