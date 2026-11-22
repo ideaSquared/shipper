@@ -17,8 +17,7 @@ async function apiError(response, path) {
         .json()
         .then((body) => (typeof body === 'object' && body && 'message' in body ? String(body.message) : ''))
         .catch(() => '');
-    const rateLimited = (response.status === 403 || response.status === 429) &&
-        (response.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(message));
+    const rateLimited = (response.status === 403 || response.status === 429) && (response.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(message));
     return new GitHubApiError(`GitHub API ${path} returned ${response.status}${message ? `: ${message}` : ''}`, response.status, rateLimited);
 }
 /** A 403/404 that means the caller can't see the repo (a spent rate limit is not one). */

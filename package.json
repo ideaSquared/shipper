@@ -12,15 +12,25 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "typecheck": "tsc"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "yaml": "^2.8.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
+    "eslint": "^10.15.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.10.1",
     "typescript": "~5.9.3",
+    "typescript-eslint": "^8.73.0",
     "vitest": "^5.0.2"
   },
   "bin": {

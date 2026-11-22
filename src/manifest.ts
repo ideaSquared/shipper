@@ -121,9 +121,7 @@ export const ManifestSchema = z
     Object.entries(manifest.components).forEach(([name, component]) =>
       Object.keys(component.type === 'cloudflare-worker' && typeof component.health === 'object' ? component.health : {})
         .filter((env) => !(env in manifest.environments))
-        .forEach((env) =>
-          ctx.addIssue({ code: 'custom', path: ['components', name, 'health', env], message: `unknown environment '${env}'` }),
-        ),
+        .forEach((env) => ctx.addIssue({ code: 'custom', path: ['components', name, 'health', env], message: `unknown environment '${env}'` })),
     );
   });
 

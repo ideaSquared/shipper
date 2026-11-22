@@ -72,7 +72,8 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 async function ask(question: string): Promise<string> {
-  if (!process.stdin.isTTY) throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
+  if (!process.stdin.isTTY)
+    throw new Error('Not a terminal, so ship cannot ask. Production needs its name typed, and --yes does not skip that: run it from a terminal.');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`${question} `);
   rl.close();
@@ -177,7 +178,10 @@ main().then(
     if (error instanceof GitHubApiError && error.rateLimited) console.error(`⏳ ${RATE_LIMIT_HINT}`);
     else if (current && isAccessError(error)) {
       console.error(`🔑 ${accessHint(current.repo, await ownerOf(current.client))}`);
-      if (current.writesVariables) console.error(`   Freezing writes the repo's SHIP_FREEZE Actions variable: it needs repo admin, or a fine-grained token with Variables: read and write.`);
+      if (current.writesVariables)
+        console.error(
+          `   Freezing writes the repo's SHIP_FREEZE Actions variable: it needs repo admin, or a fine-grained token with Variables: read and write.`,
+        );
     }
     process.exit(1);
   },

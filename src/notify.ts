@@ -81,12 +81,7 @@ export function signBody(secret: string, body: string): string {
 }
 
 // Posts the report. Never throws: a Discord message must not decide whether a deploy passed.
-export async function sendReport(
-  url: string,
-  secret: string,
-  report: ShipReport,
-  fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: boolean; detail: string }> {
+export async function sendReport(url: string, secret: string, report: ShipReport, fetchImpl: typeof fetch = fetch): Promise<{ ok: boolean; detail: string }> {
   const body = JSON.stringify(report);
   try {
     const response = await fetchImpl(url, {
@@ -107,5 +102,4 @@ export async function sendReport(
 
 // Who a deploy is credited to. A deploy that runs because something was merged to the default branch is
 // automatic, so it is credited to GitHub Actions; `ship deploy` and `ship rollback` name the person who ran them.
-export const shipActor = (eventName: string | undefined, actor: string): string =>
-  eventName === 'push' ? 'GitHub Actions' : actor;
+export const shipActor = (eventName: string | undefined, actor: string): string => (eventName === 'push' ? 'GitHub Actions' : actor);

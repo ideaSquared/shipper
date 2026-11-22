@@ -141,10 +141,7 @@ describe('status', () => {
   it('shows what is live, when, who shipped it, and how far behind main it is', async () => {
     const { ctx, lines } = context(fakeClient());
     expect(await status(ctx)).toBe(0);
-    expect(lines).toEqual([
-      '🚢 gaminginit-bot (acme/app) · main is at ccccccc',
-      '🟡 production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind',
-    ]);
+    expect(lines).toEqual(['🚢 gaminginit-bot (acme/app) · main is at ccccccc', '🟡 production   aaaaaaa  13 Nov, 20:42  octocat  2 commits behind']);
   });
 
   it('says up to date or never deployed', async () => {
@@ -176,7 +173,7 @@ describe('checks on the default branch head', () => {
     const { ctx, lines } = context(failed);
     await status(ctx);
     expect(lines.slice(2)).toEqual([
-      "⛔ ccccccc would be blocked by the gate:",
+      '⛔ ccccccc would be blocked by the gate:',
       "   • check 'test' did not pass. Open the check to see why: fix the code, or re-run the check if it was cancelled or timed out. A deploy can't override it.",
     ]);
   });
@@ -197,7 +194,13 @@ describe('checks on the default branch head', () => {
   });
 
   it('status says so when it cannot read the checks, and still shows what is live', async () => {
-    const { ctx, lines } = context(fakeClient({ checkRuns: async () => { throw new Error('boom'); } }));
+    const { ctx, lines } = context(
+      fakeClient({
+        checkRuns: async () => {
+          throw new Error('boom');
+        },
+      }),
+    );
     expect(await status(ctx)).toBe(0);
     expect(lines[1]).toContain('production');
     expect(lines[2]).toBe('⚠️  Could not check the default branch head: boom');
@@ -217,9 +220,7 @@ describe('requires and smoke state, shown before a deploy', () => {
   it('status says production needs head live on staging first', async () => {
     const { ctx, lines } = context(fakeClient(), TWO);
     await status(ctx);
-    expect(lines.slice(-1)).toEqual([
-      '🔗 production only takes ccccccc once it is live on staging. Run ship deploy gaminginit-bot staging first.',
-    ]);
+    expect(lines.slice(-1)).toEqual(['🔗 production only takes ccccccc once it is live on staging. Run ship deploy gaminginit-bot staging first.']);
   });
 
   it('status stays quiet about it once head is live on staging', async () => {
@@ -266,7 +267,10 @@ describe('requires and smoke state, shown before a deploy', () => {
 
   it('diff warns about a prerequisite and a freeze for an environment that was never deployed', async () => {
     const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
-    const { ctx, lines } = context(fakeClient({ deployments: async () => [], lastSuccessfulDeployment: async () => undefined, readVariable: async () => frozen }), TWO);
+    const { ctx, lines } = context(
+      fakeClient({ deployments: async () => [], lastSuccessfulDeployment: async () => undefined, readVariable: async () => frozen }),
+      TWO,
+    );
     await diff(ctx, 'production');
     expect(lines.join('\n')).toContain('production only takes ccccccc once it is live on staging');
     expect(lines.join('\n')).toContain('❄️  frozen: all environments');
@@ -287,10 +291,7 @@ describe('requires and smoke state, shown before a deploy', () => {
   });
 
   it('status does not flag it once a later deploy went through', async () => {
-    const later: DeploymentSummary[] = [
-      { sha: HEAD, createdAt: '2026-11-14T20:42:50Z', creator: 'octocat', state: 'success' },
-      ...STAGING_LIVE('error'),
-    ];
+    const later: DeploymentSummary[] = [{ sha: HEAD, createdAt: '2026-11-14T20:42:50Z', creator: 'octocat', state: 'success' }, ...STAGING_LIVE('error')];
     const { ctx, lines } = context(fakeClient({ deployments: async () => later }));
     await status(ctx);
     expect(lines.join('\n')).not.toContain('smoke checks failed');
@@ -379,10 +380,7 @@ describe('pending migrations', () => {
   });
 
   it('shows them in the deploy preview before asking to confirm', async () => {
-    const { ctx, lines } = context(
-      withFiles([{ filename: 'packages/db/migrations/0012_add_plans.sql', status: 'added' }]),
-      WITH_MIGRATIONS,
-    );
+    const { ctx, lines } = context(withFiles([{ filename: 'packages/db/migrations/0012_add_plans.sql', status: 'added' }]), WITH_MIGRATIONS);
     await deploy(ctx, undefined, options({ wait: false }));
     expect(lines.slice(1, 5)).toEqual([
       '📦 aaaaaaa → ccccccc · 1 commits',
@@ -625,7 +623,12 @@ describe('following a deploy', () => {
     name: 'deploy',
     status,
     conclusion,
-    steps: step ? [{ name: 'Set up job', status: 'completed', conclusion: 'success' }, { name: step, status: 'in_progress', conclusion: null }] : [],
+    steps: step
+      ? [
+          { name: 'Set up job', status: 'completed', conclusion: 'success' },
+          { name: step, status: 'in_progress', conclusion: null },
+        ]
+      : [],
   });
 
   it('shows the step each job is on, a heartbeat when nothing changes for a minute, and the total time', async () => {
@@ -801,13 +804,7 @@ describe('production safety', () => {
     const asked: string[] = [];
     const client = fakeClient();
     const { ctx, lines } = context(client);
-    expect(
-      await deploy(
-        ctx,
-        'production',
-        options({ wait: false, ask: async (question) => (asked.push(question), 'gaminginit') }),
-      ),
-    ).toBe(1);
+    expect(await deploy(ctx, 'production', options({ wait: false, ask: async (question) => (asked.push(question), 'gaminginit') }))).toBe(1);
     expect(lines).toContain('🚨🚨🚨  PRODUCTION  🚨🚨🚨');
     expect(asked).toHaveLength(1);
     expect(lines.slice(-2)).toEqual(["🙅 That isn't gaminginit-bot.", '🙅 Not shipped.']);
@@ -821,7 +818,6 @@ describe('production safety', () => {
     expect(client.dispatched).toHaveLength(1);
   });
 });
-
 
 describe('a freeze', () => {
   const FROZEN = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });

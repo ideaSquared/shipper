@@ -30,8 +30,18 @@ const input: ReportInput = {
 describe('outcomeOf', () => {
   it('calls it shipped only when every component deployed', () => {
     expect(outcomeOf([{ name: 'a', status: 'deployed' }])).toBe('shipped');
-    expect(outcomeOf([{ name: 'a', status: 'rolled-back' }, { name: 'b', status: 'skipped' }])).toBe('rolled-back');
-    expect(outcomeOf([{ name: 'a', status: 'deployed' }, { name: 'b', status: 'failed' }])).toBe('failed');
+    expect(
+      outcomeOf([
+        { name: 'a', status: 'rolled-back' },
+        { name: 'b', status: 'skipped' },
+      ]),
+    ).toBe('rolled-back');
+    expect(
+      outcomeOf([
+        { name: 'a', status: 'deployed' },
+        { name: 'b', status: 'failed' },
+      ]),
+    ).toBe('failed');
   });
 });
 
@@ -79,7 +89,9 @@ describe('sendReport', () => {
       ok: true,
       detail: 'Discord message sent',
     });
-    const expected = `sha256=${createHmac('sha256', 's3cret').update(seen[0]?.body ?? '').digest('hex')}`;
+    const expected = `sha256=${createHmac('sha256', 's3cret')
+      .update(seen[0]?.body ?? '')
+      .digest('hex')}`;
     expect(seen[0]?.signature).toBe(expected);
     expect(signBody('s3cret', seen[0]?.body ?? '')).toBe(expected);
   });
@@ -97,9 +109,7 @@ describe('sendReport', () => {
     const echoesUrl: typeof fetch = async (target) => {
       throw new TypeError(`Failed to parse URL from ${String(target)}`);
     };
-    expect((await sendReport('not-a-url?key=hunter2', 's', buildReport(input), echoesUrl)).detail).toBe(
-      'Failed to parse URL from [webhook url]',
-    );
+    expect((await sendReport('not-a-url?key=hunter2', 's', buildReport(input), echoesUrl)).detail).toBe('Failed to parse URL from [webhook url]');
     const brokenBody: typeof fetch = async () => {
       const body = new ReadableStream({ start: (controller) => controller.error(new Error('connection reset')) });
       return new Response(body, { status: 502 });

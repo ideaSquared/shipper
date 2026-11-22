@@ -111,9 +111,7 @@ components: { api: { type: cloudflare-worker, health: { production: ${check} } }
   });
 
   it('rejects a manifest with no components', () => {
-    expect(() => parseManifest('product: x\nenvironments: { production: {} }\ncomponents: {}\n')).toThrow(
-      /at least one component/,
-    );
+    expect(() => parseManifest('product: x\nenvironments: { production: {} }\ncomponents: {}\n')).toThrow(/at least one component/);
   });
 
   it('rejects component types it cannot deploy yet', () => {
@@ -143,4 +141,3 @@ components: { stack: { type: external, workflow: .github/workflows/deploy.yml } 
     expect(manifest.components.stack).toEqual({ type: 'external', workflow: '.github/workflows/deploy.yml' });
   });
 });
-

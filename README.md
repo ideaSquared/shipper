@@ -95,9 +95,9 @@ trigger and call the shipper workflow:
 
 ```yaml
 dispatch:
-  workflow: ci.yml                 # file in .github/workflows
-  environmentInput: environment    # the workflow input that takes the environment (optional)
-  rollbackWorkflow: ship-rollback.yml   # what ship rollback starts (optional, this is the default)
+  workflow: ci.yml # file in .github/workflows
+  environmentInput: environment # the workflow input that takes the environment (optional)
+  rollbackWorkflow: ship-rollback.yml # what ship rollback starts (optional, this is the default)
 ```
 
 `dist/` holds the compiled CLI and is committed, so installing from GitHub needs no build. Run
@@ -140,7 +140,7 @@ freeze keeps the others frozen.
 
 - **Where it lives:** the repo's Actions variable `SHIP_FREEZE`, JSON
   `{ environments: [...] | "all", reason, by, at }`. Setting it needs a token that may write
-  variables: repo admin, or a fine-grained token with *Variables: read and write*. A 403/404 prints
+  variables: repo admin, or a fine-grained token with _Variables: read and write_. A 403/404 prints
   that hint after the usual access one.
 - **CLI:** `ship deploy` and `ship production` refuse a frozen environment with ❄️, the reason, who
   and when. `ship rollback` still works (an incident often needs one) but prints the freeze.
@@ -219,25 +219,25 @@ live in every product and environment, who shipped it and when, and any failed o
 
 ```yaml
 product: creatrgrid
-discord: creatrgrid              # bot project for the deploy message (optional)
-dispatch: { workflow: deploy.yml, environmentInput: environment }   # for ship deploy (optional)
-checks: [verify, e2e]            # check runs that must pass on the commit (optional)
-migrations: [packages/db/migrations]   # where migration files live, shown by ship diff (optional)
+discord: creatrgrid # bot project for the deploy message (optional)
+dispatch: { workflow: deploy.yml, environmentInput: environment } # for ship deploy (optional)
+checks: [verify, e2e] # check runs that must pass on the commit (optional)
+migrations: [packages/db/migrations] # where migration files live, shown by ship diff (optional)
 environments:
   staging:
-    wranglerEnv: staging         # passed to wrangler --env (optional)
+    wranglerEnv: staging # passed to wrangler --env (optional)
   production:
-    requires: [staging]          # only commits already live on staging (optional)
-components:                      # deployed in this order
+    requires: [staging] # only commits already live on staging (optional)
+components: # deployed in this order
   api:
     type: cloudflare-worker
-    path: services/api           # folder with the wrangler config (default: .)
+    path: services/api # folder with the wrangler config (default: .)
     migrations: { d1: creatorgrid-db }
-    health: /api/v1/health       # path on the deployed URL, or a full URL (optional)
+    health: /api/v1/health # path on the deployed URL, or a full URL (optional)
   web:
     type: cloudflare-worker
     path: apps/web
-    build: pnpm --filter @creatorgrid/app.web build   # run from the repo root (optional)
+    build: pnpm --filter @creatorgrid/app.web build # run from the repo root (optional)
 ```
 
 Unknown keys are rejected, so a typo fails the deploy instead of being ignored. `cloudflare-worker`
@@ -250,8 +250,8 @@ unrelated to a component's `migrations: { d1: DB }`, which names the D1 binding 
 deploying; this one only makes `ship diff` and the `ship deploy` preview show what is coming.
 
 ```yaml
-migrations: [packages/db/migrations]          # one folder
-migrations: [services/*/src/migrations]       # `*` matches one path segment (no other wildcards)
+migrations: [packages/db/migrations] # one folder
+migrations: [services/*/src/migrations] # `*` matches one path segment (no other wildcards)
 ```
 
 Between the live commit and the one going out, `ship diff` and the deploy preview then print the
@@ -280,14 +280,14 @@ for each environment:
 ```yaml
 environments:
   staging:
-    wranglerEnv: staging         # wrangler deploy --env staging (an [env.staging] block in wrangler config)
+    wranglerEnv: staging # wrangler deploy --env staging (an [env.staging] block in wrangler config)
   production:
-    requires: [staging]          # production only takes commits already live on staging
+    requires: [staging] # production only takes commits already live on staging
 components:
   api:
     type: cloudflare-worker
     path: services/api
-    health:                      # one health check per environment
+    health: # one health check per environment
       staging: https://api-staging.example.com/api/v1/health
       production: /api/v1/health
   web:
@@ -312,7 +312,8 @@ components:
 
   A mismatch fails like any health failure (the Worker is rolled back) with a message such as
   `health check for staging returned 200 but body did not contain "\"status\":\"ok\""; body was
-  "<html>Down for maintenance…"`, showing the first 120 characters of the body.
+"<html>Down for maintenance…"`, showing the first 120 characters of the body.
+
 - `build` runs with two extra environment variables: `SHIP_ENVIRONMENT` (the environment being
   deployed, e.g. `staging`) and `SHIP_WRANGLER_ENV` (its `wranglerEnv`, or empty when it has none).
 
@@ -367,7 +368,7 @@ jobs:
     permissions:
       contents: read
       checks: read
-      deployments: write           # shipper creates the GitHub Deployment
+      deployments: write # shipper creates the GitHub Deployment
     uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
     with:
       environment: production
@@ -404,7 +405,7 @@ jobs:
     secrets: inherit
   deploy:
     needs: gate
-    uses: ./.github/workflows/deploy.yml     # the repo's own, with a workflow_call trigger
+    uses: ./.github/workflows/deploy.yml # the repo's own, with a workflow_call trigger
     with: { environment: staging }
     secrets: inherit
   report:
@@ -434,9 +435,9 @@ the `uses:` line and `shipper-ref` to the same full SHA (the input's default is 
 that still use `@v1`, so a SHA-pinned caller must pass it), with a comment naming the version:
 
 ```yaml
-    uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
-    with:
-      shipper-ref: <full-commit-sha> # v1.x
+uses: ideaSquared/shipper/.github/workflows/deploy.yml@<full-commit-sha> # v1.x
+with:
+  shipper-ref: <full-commit-sha> # v1.x
 ```
 
 To bump, change both SHAs to the new release's commit. Dependabot for GitHub Actions (`package-ecosystem:

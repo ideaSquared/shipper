@@ -39,7 +39,9 @@ export async function pollHealth(url, fetchImpl, sleep, attempts, intervalMs, re
         };
     };
     const attempt = async (n) => {
-        const result = await check().catch((error) => ({ failure: (error instanceof Error ? error.message : String(error)) || 'request failed' }));
+        const result = await check().catch((error) => ({
+            failure: (error instanceof Error ? error.message : String(error)) || 'request failed',
+        }));
         if (result.failure === undefined && result.mismatch === undefined)
             return { ok: true, detail: `${url} answered` };
         if (n >= attempts) {
@@ -109,19 +111,15 @@ export async function deployComponents(options) {
         if (results.some((result) => result.status !== 'deployed'))
             return [...results, { name, status: 'skipped' }];
         if (component.type === 'external') {
-            return [...results, { name, status: 'failed', detail: `deployed by ${component.workflow}, not by shipper's deploy job: call gate.yml and report.yml around it` }];
+            return [
+                ...results,
+                { name, status: 'failed', detail: `deployed by ${component.workflow}, not by shipper's deploy job: call gate.yml and report.yml around it` },
+            ];
         }
         return [...results, await deployOne(name, component, options)];
     }, Promise.resolve([]));
 }
 export function renderSummary(environment, sha, results) {
     const rows = results.map((result) => `| ${result.name} | ${result.status} | ${result.url ?? ''} | ${result.detail ?? ''} |`);
-    return [
-        `### Ship ${sha.slice(0, 7)} to ${environment}`,
-        '',
-        '| Component | Result | URL | Detail |',
-        '| --- | --- | --- | --- |',
-        ...rows,
-        '',
-    ].join('\n');
+    return [`### Ship ${sha.slice(0, 7)} to ${environment}`, '', '| Component | Result | URL | Detail |', '| --- | --- | --- | --- |', ...rows, ''].join('\n');
 }

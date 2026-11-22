@@ -266,9 +266,7 @@ async function report(environment) {
     const deployedOk = env.SHIP_OUTCOME === 'success';
     const deployComponent = { name: 'deploy', status: deployedOk ? 'deployed' : 'failed', detail: `deploy job: ${env.SHIP_OUTCOME}` };
     // Smoke checks run only for a successful deploy, before reporting, so a failure shows as a failed deploy.
-    const smoke = deployedOk
-        ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) }))
-        : undefined;
+    const smoke = deployedOk ? smokeComponent(manifest, environment, await runSmoke(manifest, environment, { fetch, sleep: (ms) => sleep(ms) })) : undefined;
     if (smoke)
         annotate('Ship smoke', smoke.detail ?? 'smoke check failed');
     const components = smoke ? [deployComponent, smoke] : [deployComponent];

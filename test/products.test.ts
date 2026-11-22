@@ -1,14 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  accessHint,
-  activeProducts,
-  assertShippable,
-  ownerFromCodeowners,
-  parseTarget,
-  productForRepo,
-  repoFromRemote,
-  resolveRepo,
-} from '../src/products.ts';
+import { accessHint, activeProducts, assertShippable, ownerFromCodeowners, parseTarget, productForRepo, repoFromRemote, resolveRepo } from '../src/products.ts';
 
 describe('repoFromRemote', () => {
   it('reads https and ssh GitHub remotes', () => {
@@ -69,7 +60,13 @@ describe('retired products', () => {
 
 describe('owners from CODEOWNERS', () => {
   it('takes the first owner on the catch-all line, skipping comments and other paths', () => {
-    const text = ['# Today each product has a single owning team.', '', '/docs/ @ideaSquared/docs', '* @ideaSquared/creatrgrid @someone', '/src/ @ideaSquared/creatrgrid'].join('\n');
+    const text = [
+      '# Today each product has a single owning team.',
+      '',
+      '/docs/ @ideaSquared/docs',
+      '* @ideaSquared/creatrgrid @someone',
+      '/src/ @ideaSquared/creatrgrid',
+    ].join('\n');
     expect(ownerFromCodeowners(text)).toBe('@ideaSquared/creatrgrid');
   });
 

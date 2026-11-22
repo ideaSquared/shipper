@@ -70,8 +70,7 @@ async function apiError(response: Response, path: string): Promise<GitHubApiErro
     .then((body: unknown) => (typeof body === 'object' && body && 'message' in body ? String(body.message) : ''))
     .catch(() => '');
   const rateLimited =
-    (response.status === 403 || response.status === 429) &&
-    (response.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(message));
+    (response.status === 403 || response.status === 429) && (response.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(message));
   return new GitHubApiError(`GitHub API ${path} returned ${response.status}${message ? `: ${message}` : ''}`, response.status, rateLimited);
 }
 
@@ -210,9 +209,7 @@ export function createGitHubClient(repository: string, token: string | undefined
     const query = new URLSearchParams({ sha, environment, per_page: '100' });
     const deployments = await getAll(`/deployments?${query}`, DeploymentsSchema, (page) => page);
     const statuses = await Promise.all(
-      deployments.map((deployment) =>
-        getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page),
-      ),
+      deployments.map((deployment) => getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page)),
     );
     return statuses.flat().some((status) => status.state === 'success');
   }
@@ -230,10 +227,15 @@ export function createGitHubClient(repository: string, token: string | undefined
     async lastSuccessfulDeployment(environment) {
       const query = new URLSearchParams({ environment, per_page: '20' });
       // Newest first; stop at the first one that succeeded.
-      return findInPages(`/deployments?${query}`, DeploymentShasSchema, (page) => page, async (deployment) => {
-        const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
-        return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
-      });
+      return findInPages(
+        `/deployments?${query}`,
+        DeploymentShasSchema,
+        (page) => page,
+        async (deployment) => {
+          const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
+          return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
+        },
+      );
     },
     async relation(base, head) {
       return (await get(`/compare/${base}...${head}?per_page=1`, CompareSchema)).status;
@@ -271,8 +273,8 @@ export function createGitHubClient(repository: string, token: string | undefined
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           accept: 'application/vnd.github+json',
           'x-github-api-version': '2022-11-28',
-        // GitHub refuses API requests without a User-Agent.
-        'user-agent': 'ideasquared-ship',
+          // GitHub refuses API requests without a User-Agent.
+          'user-agent': 'ideasquared-ship',
         },
       });
       if (response.status === 404) return undefined;
@@ -355,19 +357,15 @@ export function createGitHubClient(repository: string, token: string | undefined
     },
     async writeVariable(name, value) {
       const base = `${BASE}/repos/${repository}/actions/variables`;
-      await request(`${base}/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ name, value }) }).catch(
-        async (error: unknown) => {
-          if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
-          await request(base, { method: 'POST', body: JSON.stringify({ name, value }) });
-        },
-      );
+      await request(`${base}/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ name, value }) }).catch(async (error: unknown) => {
+        if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+        await request(base, { method: 'POST', body: JSON.stringify({ name, value }) });
+      });
     },
     async deleteVariable(name) {
-      await request(`${BASE}/repos/${repository}/actions/variables/${encodeURIComponent(name)}`, { method: 'DELETE' }).catch(
-        (error: unknown) => {
-          if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
-        },
-      );
+      await request(`${BASE}/repos/${repository}/actions/variables/${encodeURIComponent(name)}`, { method: 'DELETE' }).catch((error: unknown) => {
+        if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+      });
     },
     async currentUser() {
       const response = await request(`${BASE}/user`);

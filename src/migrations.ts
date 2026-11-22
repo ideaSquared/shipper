@@ -10,7 +10,10 @@ const escape = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 // A directory pattern as a regex over a whole directory path. `*` matches within one path segment.
 function directoryPattern(pattern: string): RegExp {
   // `.`, `./` and `/` all mean the repo root, whose files have an empty directory.
-  const segments = pattern.replace(/^\.?\/+|\/+$/g, '').replace(/^\.$/, '').split('/');
+  const segments = pattern
+    .replace(/^\.?\/+|\/+$/g, '')
+    .replace(/^\.$/, '')
+    .split('/');
   return new RegExp(`^${segments.map((segment) => segment.split('*').map(escape).join('[^/]*')).join('/')}$`);
 }
 
@@ -28,8 +31,7 @@ export function pendingMigrations(files: readonly ChangedFile[], directories: re
   const inside = (path: string) => isMigrationFile(path, directories);
   const relevant = files.filter((file) => inside(file.filename) || (file.previousFilename && inside(file.previousFilename)));
   // A file renamed into the folder is new there; one renamed within or out of it was changed.
-  const isNew = (file: ChangedFile) =>
-    file.status === 'added' || (file.status === 'renamed' && !(file.previousFilename && inside(file.previousFilename)));
+  const isNew = (file: ChangedFile) => file.status === 'added' || (file.status === 'renamed' && !(file.previousFilename && inside(file.previousFilename)));
   return {
     added: relevant.filter(isNew).map((file) => file.filename),
     changed: relevant.filter((file) => !isNew(file)).map((file) => file.filename),

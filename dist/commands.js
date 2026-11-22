@@ -121,14 +121,14 @@ export async function status(ctx) {
         const latest = recent.find((d) => d.state === 'success' || d.state === 'inactive' || d.state === 'error');
         const name = s.env(env.padEnd(12));
         const smokeFailed = latest?.state === 'error'
-            ? [`   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
+            ? [
+                `   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`,
+            ]
             : [];
         if (!latest)
             return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`], upToDate: false };
         const upToDate = latest.sha === head;
-        const behind = upToDate
-            ? s.ok('up to date')
-            : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
+        const behind = upToDate ? s.ok('up to date') : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
         const line = `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
         return { env, lines: [line, ...smokeFailed], upToDate };
     }));
@@ -267,7 +267,9 @@ export async function deploy(ctx, environment, options) {
     const frozen = await freezeOf(ctx);
     if (frozen && freezeFailure(frozen, env)) {
         ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
-        describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+        describeFreeze(ctx, frozen)
+            .slice(1)
+            .forEach((line) => ctx.print(line));
         ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${manifest.product} ${env} when it is safe.`)}`);
         return 1;
     }
@@ -393,7 +395,10 @@ const wasLive = (deployment) => deployment.state === 'success' || deployment.sta
 // The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest
 // one that was live before the live one. It must have been live on this environment.
 function rollbackTarget(deployments, live, env, to) {
-    const candidates = deployments.filter(wasLive).map((d) => d.sha).filter((sha) => sha !== live);
+    const candidates = deployments
+        .filter(wasLive)
+        .map((d) => d.sha)
+        .filter((sha) => sha !== live);
     if (!to) {
         const [newest] = candidates;
         if (newest)

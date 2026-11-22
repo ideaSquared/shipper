@@ -47,12 +47,7 @@ const PRODUCTION = 'production';
 
 // The usual yes/no (skipped by --yes), then for production a red warning and the product name
 // typed back, which --yes never skips.
-async function approve(
-  ctx: Context,
-  env: string,
-  question: string,
-  options: Pick<DeployOptions, 'yes' | 'confirm' | 'ask'>,
-): Promise<boolean> {
+async function approve(ctx: Context, env: string, question: string, options: Pick<DeployOptions, 'yes' | 'confirm' | 'ask'>): Promise<boolean> {
   const s = ctx.style;
   if (env === PRODUCTION) {
     ctx.print('');
@@ -167,14 +162,15 @@ export async function status(ctx: Context): Promise<number> {
       // newer attempt that failed before deploying, or is still pending, doesn't hide it.
       const latest = recent.find((d) => d.state === 'success' || d.state === 'inactive' || d.state === 'error');
       const name = s.env(env.padEnd(12));
-      const smokeFailed = latest?.state === 'error'
-        ? [`   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`]
-        : [];
+      const smokeFailed =
+        latest?.state === 'error'
+          ? [
+              `   ⚠️  ${s.warn(`${short(latest.sha)} is live but its smoke checks failed. If the release is at fault, run ship rollback ${manifest.product} ${env}.`)}`,
+            ]
+          : [];
       if (!latest) return { env, lines: [`⚪ ${name} ${s.dim('never deployed')}`], upToDate: false };
       const upToDate = latest.sha === head;
-      const behind = upToDate
-        ? s.ok('up to date')
-        : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
+      const behind = upToDate ? s.ok('up to date') : s.warn(`${(await client.compare(latest.sha, head)).totalCommits} commits behind`);
       const line = `${upToDate ? '🟢' : '🟡'} ${name} ${s.sha(short(latest.sha))}  ${s.dim(formatTime(latest.createdAt, ctx.timeZone))}  ${latest.creator}  ${behind}`;
       return { env, lines: [line, ...smokeFailed], upToDate };
     }),
@@ -254,9 +250,7 @@ export async function diff(ctx: Context, environment: string | undefined): Promi
     return 0;
   }
   const comparison = await ctx.client.compare(live, ctx.head);
-  ctx.print(
-    `📦 ${s.env(env)}: ${s.sha(short(live))} → ${s.sha(short(ctx.head))} · ${s.warn(`${comparison.totalCommits} commits waiting`)}`,
-  );
+  ctx.print(`📦 ${s.env(env)}: ${s.sha(short(live))} → ${s.sha(short(ctx.head))} · ${s.warn(`${comparison.totalCommits} commits waiting`)}`);
   printCommits(ctx, comparison.commits, comparison.totalCommits, 50);
   printMigrations(ctx, comparison);
   ctx.print(`🔗 ${s.link(comparison.url)}`);
@@ -325,7 +319,9 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
   const frozen = await freezeOf(ctx);
   if (frozen && freezeFailure(frozen, env)) {
     ctx.print(`❄️  ${s.bad(`${env} is frozen. Not deploying.`)}`);
-    describeFreeze(ctx, frozen).slice(1).forEach((line) => ctx.print(line));
+    describeFreeze(ctx, frozen)
+      .slice(1)
+      .forEach((line) => ctx.print(line));
     ctx.print(`   ${s.dim(`Lift it with ship unfreeze ${manifest.product} ${env} when it is safe.`)}`);
     return 1;
   }
@@ -342,8 +338,7 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     ctx.print(`⚠️  ${s.warn(`Could not ${what}: ${error instanceof Error ? error.message : String(error)}`)}`);
     return undefined;
   };
-  const relation =
-    live && live !== head ? await client.relation(live, head).catch(unknown(`compare ${short(head)} with the live ${short(live)}`)) : undefined;
+  const relation = live && live !== head ? await client.relation(live, head).catch(unknown(`compare ${short(head)} with the live ${short(live)}`)) : undefined;
   const gate = evaluateGate(manifest, env, {
     sha: head,
     defaultBranch: ctx.defaultBranch,
@@ -364,17 +359,13 @@ export async function deploy(ctx: Context, environment: string | undefined, opti
     return 1;
   }
   if (live === head && !options.redeploy) {
-    ctx.print(
-      `✅ ${s.sha(short(head))} is ${s.ok('already live')} on ${s.env(env)}. Nothing to ship ${s.dim('(use --redeploy to deploy it again)')}.`,
-    );
+    ctx.print(`✅ ${s.sha(short(head))} is ${s.ok('already live')} on ${s.env(env)}. Nothing to ship ${s.dim('(use --redeploy to deploy it again)')}.`);
     return 0;
   }
 
   if (live && live !== head) {
     const comparison = await client.compare(live, head).catch(unknown('list the commits going out'));
-    ctx.print(
-      `📦 ${s.sha(short(live))} → ${s.sha(short(head))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits`)}` : ''}`,
-    );
+    ctx.print(`📦 ${s.sha(short(live))} → ${s.sha(short(head))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits`)}` : ''}`);
     if (comparison) {
       printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
       printMigrations(ctx, comparison);
@@ -458,7 +449,10 @@ const wasLive = (deployment: DeploymentSummary) => deployment.state === 'success
 // The commit to roll back to: the one asked for (a SHA or a prefix of 7+ characters), or the newest
 // one that was live before the live one. It must have been live on this environment.
 function rollbackTarget(deployments: readonly DeploymentSummary[], live: string, env: string, to: string | undefined): string {
-  const candidates = deployments.filter(wasLive).map((d) => d.sha).filter((sha) => sha !== live);
+  const candidates = deployments
+    .filter(wasLive)
+    .map((d) => d.sha)
+    .filter((sha) => sha !== live);
   if (!to) {
     const [newest] = candidates;
     if (newest) return newest;
@@ -519,9 +513,7 @@ export async function rollback(ctx: Context, environment: string | undefined, op
     ctx.print(`⚠️  ${s.warn(`Could not list the commits being taken out: ${error instanceof Error ? error.message : String(error)}`)}`);
     return undefined;
   });
-  ctx.print(
-    `⏪ live ${s.sha(short(running))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`,
-  );
+  ctx.print(`⏪ live ${s.sha(short(running))} → ${s.sha(short(target))}${comparison ? ` · ${s.warn(`${comparison.totalCommits} commits taken out`)}` : ''}`);
   if (comparison) printCommits(ctx, comparison.commits, comparison.totalCommits, 10);
   if (!(await approve(ctx, env, `⏪ Roll ${s.env(env)} back to ${s.sha(short(target))}?`, options))) {
     ctx.print(`🙅 ${s.dim('Not rolled back.')}`);

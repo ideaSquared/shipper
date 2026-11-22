@@ -126,9 +126,7 @@ export async function unfreeze(ctx, environment, options) {
         // Re-read after the prompt so a freeze someone added meanwhile is kept (see freeze()).
         const latest = await readFreeze(client);
         // Lifting one environment keeps the rest frozen, including out of an "all" freeze.
-        const remaining = latest
-            ? (latest.environments === 'all' ? allEnvironments(ctx) : latest.environments).filter((name) => name !== environment)
-            : [];
+        const remaining = latest ? (latest.environments === 'all' ? allEnvironments(ctx) : latest.environments).filter((name) => name !== environment) : [];
         if (latest && remaining.length > 0)
             await client.writeVariable(FREEZE_VARIABLE, JSON.stringify({ ...latest, environments: remaining }));
         else if (latest)
