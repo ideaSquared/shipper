@@ -1,0 +1,6 @@
+# pnpm 10 reads its settings from here; .npmrc is for auth and registry only.
+packages:
+  - .
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
+allowBuilds: {}
