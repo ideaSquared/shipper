@@ -444,6 +444,11 @@ To bump, change both SHAs to the new release's commit. Dependabot for GitHub Act
 github-actions`) updates the `uses:` pin and its version comment for you; it does not know about
 `shipper-ref`, so change that to match in the same PR.
 
+Releases are SemVer. The release PR bumps `version` in `package.json` (1.x.y while `v1` is the line) and
+adds a `CHANGELOG.md` entry; the Release workflow then tags that version as an annotated `vX.Y.Z`,
+publishes a GitHub Release with generated notes, and moves `v1`. A version that already has a tag is
+refused.
+
 Callers that still use `@v1` keep working, but they take whatever `v1` points at. `v1` moves only by an
 approved manual release: Actions > Release > Run workflow (optionally a full commit SHA; empty means the
 head of `main`). The `release` job runs in the protected `release` GitHub Environment, so a required
