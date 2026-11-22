@@ -31,4 +31,11 @@ describe('the ship command line', () => {
     const result = ship(['--help'], { NO_COLOR: '1', FORCE_COLOR: '1' });
     expect(result.stdout).not.toContain('\u001b[');
   });
+
+  it('exits non-zero and reports the error on stderr for an unknown option', () => {
+    const result = ship(['--no-such-option']);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('ship:');
+    expect(result.stdout).toBe('');
+  });
 });
