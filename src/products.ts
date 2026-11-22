@@ -43,6 +43,10 @@ export const PRODUCTS: Readonly<Record<string, Product>> = {
     repo: 'ideaSquared/ideasquared-website',
     description: 'ideaSquared studio website',
   },
+  pairflix: {
+    repo: 'ideaSquared/pairflix',
+    description: 'Pairflix, what should we watch tonight',
+  },
 };
 
 // Product name → repo for the products still shipped, e.g. for `ship status` across everything.
