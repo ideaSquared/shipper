@@ -6,10 +6,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { deployComponents, renderSummary, type ComponentResult, type Run } from './cloudflare.ts';
 import { freezeFailure, freezeFromVariable } from './freeze.ts';
-import { evaluateGate, liveFailure, type GateFacts } from './gate.ts';
+import { evaluateGate, liveFailure, type GateFacts, type GateResult } from './gate.ts';
 import { createGitHubClient, GitHubApiError, type GitHubClient, type NewDeploymentStatus } from './github.ts';
 import { environmentOf, parseManifest, type Manifest } from './manifest.ts';
 import { runSmoke, smokeAfterDeploy, smokeComponent } from './smoke.ts';
+import { formatDuration, waitForGate, waitingFor } from './queue.ts';
 import { buildReport, outcomeOf, sendReport, shipActor, type Comparison, type ReportInput } from './notify.ts';
 
 const EnvSchema = z.object({
@@ -150,38 +151,81 @@ async function recordStatus(github: GitHubClient, id: number, status: NewDeploym
 }
 
 async function gate(environment: string): Promise<number> {
-  const env = EnvSchema.extend({ DEFAULT_BRANCH: z.string().min(1) }).parse(process.env);
+  const env = EnvSchema.extend({
+    DEFAULT_BRANCH: z.string().min(1),
+    // How long a deploy blocked only by running checks (or a `requires` deploy under way) waits; 0 fails at once.
+    SHIP_WAIT_MINUTES: z.coerce.number().min(0).default(0),
+  }).parse(process.env);
   const manifest = loadManifest(env.SHIP_REPO_ROOT);
   const required = environmentOf(manifest, environment).requires;
   const github = createGitHubClient(env.GITHUB_REPOSITORY, env.GITHUB_TOKEN);
+  const limitMs = env.SHIP_WAIT_MINUTES * 60_000;
   // A rollback target must have been live here before; a normal deploy must not be older than live.
+  const deployedEnvironments = env.SHIP_ROLLBACK ? [...required, environment] : required;
+  // Only worth asking when waiting is on: a `requires` environment without the commit yet may be deploying it.
+  const deployingTo = async (deployedTo: readonly string[]): Promise<string[]> => {
+    const missing = required.filter((name) => !deployedTo.includes(name));
+    return limitMs > 0 && missing.length > 0 ? github.deployingTo(env.SHIP_SHA, missing) : [];
+  };
   const [onDefaultBranch, checkRuns, deployedTo, liveSha] = await Promise.all([
     github.isOnBranch(env.SHIP_SHA, env.DEFAULT_BRANCH),
     manifest.checks.length > 0 ? github.checkRuns(env.SHIP_SHA) : Promise.resolve([]),
-    github.deployedTo(env.SHIP_SHA, env.SHIP_ROLLBACK ? [...required, environment] : required),
+    github.deployedTo(env.SHIP_SHA, deployedEnvironments),
     env.SHIP_ROLLBACK ? Promise.resolve(undefined) : github.lastSuccessfulDeployment(environment).catch(() => undefined),
   ]);
   // A rollback is never blocked by a freeze, not even by one that can't be read.
   const frozen = env.SHIP_ROLLBACK ? {} : freezeFromVariable(env.SHIP_FREEZE);
-  const gated = evaluateGate(manifest, environment, {
+  const facts: GateFacts = {
     freeze: frozen.freeze,
     sha: env.SHIP_SHA,
     defaultBranch: env.DEFAULT_BRANCH,
     onDefaultBranch,
     checkRuns,
     deployedTo,
+    deployingTo: await deployingTo(deployedTo),
     live: await liveFacts(github, environment, env.SHIP_SHA, liveSha),
     rollback: env.SHIP_ROLLBACK,
-  });
-  const failures = [...gated.failures, ...(frozen.failure ? [frozen.failure] : [])];
-  const result = { ok: failures.length === 0, failures };
-  if (result.ok) {
+  };
+  // An unreadable freeze is a failure waiting can't fix.
+  const evaluate = (current: GateFacts): GateResult => {
+    const gated = evaluateGate(manifest, environment, current);
+    if (!frozen.failure) return gated;
+    return { ...gated, ok: false, failures: [...gated.failures, frozen.failure], hard: [...gated.hard, frozen.failure] };
+  };
+  const first = evaluate(facts);
+  // While waiting only the checks and the `requires` deploys can change. The branch and freeze can't, and
+  // the deploy job checks again that the commit isn't older than what is live.
+  const refresh = async (): Promise<GateResult> => {
+    const [runs, deployed] = await Promise.all([
+      first.waiting.length > 0 ? github.checkRuns(env.SHIP_SHA) : Promise.resolve(facts.checkRuns),
+      first.deploying.length > 0 ? github.deployedTo(env.SHIP_SHA, deployedEnvironments) : Promise.resolve(facts.deployedTo),
+    ]);
+    return evaluate({ ...facts, checkRuns: runs, deployedTo: deployed, deployingTo: await deployingTo(deployed) });
+  };
+  const outcome = await waitForGate(
+    first,
+    // Running out of API calls is not the commit's fault: wait and look again, still within the time limit.
+    () =>
+      refresh().catch((error: unknown) => {
+        if (!(error instanceof GitHubApiError && error.rateLimited)) throw error;
+        annotate('Ship gate', 'GitHub API rate limit reached while waiting. Looking again shortly.', 'warning');
+        return first;
+      }),
+    {
+      limitMs,
+      now: () => Date.now(),
+      sleep: (ms) => sleep(ms),
+      onWait: (waiting, elapsedMs) =>
+        console.log(`Waiting for ${waitingFor(waiting.checks, waiting.deploying)} · ${formatDuration(elapsedMs)} of ${formatDuration(limitMs)}`),
+    },
+  );
+  if (outcome.action === 'proceed') {
     console.log(`Gate passed: ${env.SHIP_SHA.slice(0, 7)} can deploy to ${environment}.`);
     return 0;
   }
-  result.failures.forEach((failure) => annotate('Ship gate', failure));
-  summarise(env.GITHUB_STEP_SUMMARY, [`### Ship blocked for ${environment}`, '', ...result.failures.map((f) => `- ${f}`), ''].join('\n'));
-  await notify(env, manifest, { environment, outcome: 'blocked', failures: result.failures });
+  outcome.failures.forEach((failure) => annotate('Ship gate', failure));
+  summarise(env.GITHUB_STEP_SUMMARY, [`### Ship blocked for ${environment}`, '', ...outcome.failures.map((f) => `- ${f}`), ''].join('\n'));
+  await notify(env, manifest, { environment, outcome: 'blocked', failures: outcome.failures });
   return 1;
 }
 

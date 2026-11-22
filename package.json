@@ -1,6 +1,6 @@
 {
   "name": "@ideasquared/ship",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "license": "MIT",
   "description": "Deploy tooling for every ideaSquared product: a ship.yaml manifest and a reusable GitHub Actions workflow.",

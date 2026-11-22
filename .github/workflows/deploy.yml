@@ -35,6 +35,10 @@ on:
         description: Put back a commit that was live on this environment before, even though it is older than what is live.
         type: boolean
         default: false
+      wait-minutes:
+        description: How long the gate waits when the only blockers are checks still running or a `requires` environment this commit is being deployed to right now. It fails as soon as a check fails, and on timeout. 0 fails at once, as before.
+        type: number
+        default: 30
       shipper-ref:
         description: Ref of ideaSquared/shipper whose scripts run. Keep it the same as the ref in your uses line. A caller pinned to a commit SHA must pass that same SHA here; the v1 default is for callers still on @v1.
         type: string
@@ -84,6 +88,7 @@ jobs:
         working-directory: shipper
         env:
           SHIP_ENVIRONMENT: ${{ inputs.environment }}
+          SHIP_WAIT_MINUTES: ${{ inputs.wait-minutes }}
           SHIP_SHA: ${{ inputs.sha || github.sha }}
           SHIP_ROLLBACK: ${{ inputs.rollback }}
           SHIP_REPO_ROOT: ${{ github.workspace }}/app

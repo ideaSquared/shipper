@@ -40,6 +40,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     isOnBranch: async () => true,
     checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'success' }],
     deployedTo: async () => [],
+    deployingTo: async () => [],
     lastSuccessfulDeployment: async () => LIVE,
     relation: async () => 'ahead',
     compare: async () => ({
@@ -159,13 +160,13 @@ describe('checks on the default branch head', () => {
   const running = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }] });
   const failed = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'failure' }] });
 
-  it('status warns that a deploy would have to wait, before anyone tries one', async () => {
+  it('status warns that a deploy would be queued, before anyone tries one', async () => {
     const { ctx, lines } = context(running);
     expect(await status(ctx)).toBe(0);
     expect(lines.slice(2)).toEqual([
       "⏳ ccccccc can't ship yet, a check is still running:",
       "   • check 'test' is still running, so its result is not known yet. Deploy again once it passes.",
-      '   Wait for it before running ship deploy.',
+      '   A deploy started now is queued until it passes.',
     ]);
   });
 
@@ -454,17 +455,85 @@ describe('deploy', () => {
     ]);
   });
 
-  it('says a deploy is only waiting when every blocker is a check still running', async () => {
-    const client = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }] });
+  it('queues a deploy whose checks are still running, and follows the wait and then the jobs', async () => {
+    const checks = ['in_progress', 'in_progress', 'completed'];
+    const runs: RunSummary['status'][] = ['in_progress', 'in_progress', 'completed'];
+    const client = fakeClient({
+      checkRuns: async () => {
+        const status = checks.shift() ?? 'completed';
+        return [{ name: 'test', status, conclusion: status === 'completed' ? 'success' : null }];
+      },
+      run: async () => {
+        const status = runs.shift() ?? 'completed';
+        return { id: 7, status, conclusion: status === 'completed' ? 'success' : null, url: 'https://github.com/acme/app/actions/runs/7', createdAt: '' };
+      },
+      jobs: async () =>
+        runs.length > 0
+          ? [{ name: 'deploy / Gate (production)', status: 'in_progress', conclusion: null }]
+          : [
+              { name: 'deploy / Gate (production)', status: 'completed', conclusion: 'success' },
+              { name: 'deploy / Deploy (production)', status: 'completed', conclusion: 'success' },
+            ],
+    });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines[1]).toBe("⏳ ccccccc will be queued: the deploy waits for check 'test' to pass first.");
+    const from = lines.indexOf('📨 Starting ci.yml on main…');
+    expect(lines.slice(from)).toEqual([
+      '📨 Starting ci.yml on main…',
+      "🕒 Queued. The workflow's gate waits for check 'test' (30 minutes by default), then deploys.",
+      '⏳ Waiting for GitHub to start the run…',
+      '▶️  Started: https://github.com/acme/app/actions/runs/7',
+      "   ⏳ Waiting for check 'test' · 0s",
+      '   ⏳ deploy / Gate (production): in_progress',
+      "   ✅ check 'test' passed",
+      '   ✅ deploy / Gate (production): success',
+      '   ✅ deploy / Deploy (production): success',
+      '🚀 Shipped ccccccc to production. (0s)',
+    ]);
+  });
+
+  it('starts a queued deploy and exits with --no-wait', async () => {
+    const client = fakeClient({ checkRuns: async () => [{ name: 'test', status: 'queued', conclusion: null }] });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options({ wait: false }))).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines.at(-1)).toBe('▶️  Started: https://github.com/acme/app/actions/runs/7');
+    expect(lines).toContain("🕒 Queued. The workflow's gate waits for check 'test' (30 minutes by default), then deploys.");
+  });
+
+  it('queues behind a deploy of the same commit to a required environment that is under way', async () => {
+    const manifest = MANIFEST.replace('production: {}', 'staging: {}\n  production: { requires: [staging] }');
+    const client = fakeClient({ deployingTo: async (_sha, environments) => [...environments] });
+    const { ctx, lines } = context(client, manifest);
+    expect(await deploy(ctx, 'production', options({ wait: false }))).toBe(0);
+    expect(client.dispatched).toHaveLength(1);
+    expect(lines[1]).toBe('⏳ ccccccc will be queued: the deploy waits for the staging deploy to pass first.');
+  });
+
+  it('refuses when a check is still running but something else blocks it too', async () => {
+    const client = fakeClient({
+      checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }],
+      relation: async () => 'behind',
+    });
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(1);
     expect(client.dispatched).toEqual([]);
-    expect(lines).toEqual([
-      '🔎 Checking ccccccc can ship to production…',
-      "⏳ ccccccc can't ship to production yet, a check is still running:",
-      "   • check 'test' is still running, so its result is not known yet. Deploy again once it passes.",
-      '   Its result is not known yet. Run the same deploy again once it passes.',
-    ]);
+    expect(lines[1]).toBe("⛔ Can't ship ccccccc to production:");
+  });
+
+  it('leaves the run going on Ctrl-C and says so', async () => {
+    const stops: (() => void)[] = [];
+    const client = fakeClient();
+    const { ctx, lines } = context(client);
+    const onInterrupt = (stop: () => void) => {
+      stops.push(stop);
+      return () => {};
+    };
+    await deploy(ctx, undefined, options({ onInterrupt }));
+    stops.at(-1)?.();
+    expect(lines.at(-1)).toBe('🛑 Stopped following. The deploy keeps going on GitHub: https://github.com/acme/app/actions/runs/7');
   });
 
   it('does nothing when the commit is already live, unless asked to redeploy', async () => {

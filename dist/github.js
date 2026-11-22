@@ -44,6 +44,8 @@ const CheckRunsSchema = z.object({
 });
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
+// Deployment states that mean a deploy has started and not finished. No status at all is `pending` too.
+const UNFINISHED = new Set(['pending', 'queued', 'waiting', 'in_progress']);
 const RepoSchema = z.object({ default_branch: z.string() });
 const CommitSchema = z.object({ sha: z.string() });
 const ContentSchema = z.object({ content: z.string(), encoding: z.string() });
@@ -298,6 +300,17 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
         },
         async deployedTo(sha, environments) {
             const results = await Promise.all(environments.map((env) => hasSuccessfulDeployment(sha, env)));
+            return environments.filter((_, index) => results[index]);
+        },
+        async deployingTo(sha, environments) {
+            const results = await Promise.all(environments.map(async (environment) => {
+                // Newest first, so one deployment and its latest status are enough.
+                const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DeploymentsSchema);
+                if (!newest)
+                    return false;
+                const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, StatusesSchema);
+                return UNFINISHED.has(latest?.state ?? 'pending');
+            }));
             return environments.filter((_, index) => results[index]);
         },
     };

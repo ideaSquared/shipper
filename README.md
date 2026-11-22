@@ -74,8 +74,15 @@ ship logs staging --component api          # just one component
   shows a freeze that would block it (❄️), and `ship status` flags a release that went live but failed its
   smoke checks (⚠️) until a later deploy replaces it. When a deploy fails, `ship deploy` names the job and
   step that failed before the link to the run.
-- If the only thing blocking `deploy` is a check that is still running, it says so (⏳, not ⛔) and that
-  the result is not known yet: run the same deploy again once the check passes.
+- **Queued deploys.** If the only things blocking `deploy` are checks that are still running, or a
+  `requires` environment this commit is being deployed to right now, it doesn't refuse: it says the deploy
+  will be queued, naming what it waits for, and starts the workflow, whose gate waits for them (see
+  [What a deploy does](#what-a-deploy-does)). While it follows the run it says which checks are still
+  running and for how long, then prints each job as usual. Anything else blocking it (⛔), even next to a
+  running check, still refuses. The repo's workflow must call a shipper version with queued deploys
+  (1.1.0 or later); an older one fails the gate at once, as before.
+- Ctrl-C while `deploy` or `rollback` follows a run stops following, not the run: it says so and prints the
+  run's link.
 - `deploy` runs the same gate as the workflow on the head of the default branch, shows the commits
   going out, asks before it starts (`--yes` skips that), starts the repo's deploy workflow and
   prints each job as it finishes. `--no-wait` starts it and exits. `--redeploy` deploys a commit
@@ -118,6 +125,15 @@ dispatch:
      commit that was live there before; see [Rolling back](#rolling-back)). This is checked again
      inside the deploy job, which runs one at a time, so re-running an old CI run, or a run that
      waited behind a newer deploy, can't put older code back.
+
+   **Queued.** When the only blockers are checks still running, or a `requires` environment this commit is
+   being deployed to right now, the gate waits instead of failing: it looks again every 30 seconds and
+   carries on as soon as everything has passed. It fails as soon as a check fails (or that other deploy
+   does), and when the time runs out: 30 minutes by default, set by the workflow's `wait-minutes` input
+   (`0` fails at once, as before). Anything else (not on the default branch, older than live, a freeze, a
+   check that never ran, a `requires` environment with no deploy under way) fails at once. The job log
+   says what it is waiting for and for how long.
+
 2. **Deploy.** For each component, in the order written in `ship.yaml`: run `build`, apply D1
    migrations, then `wrangler deploy` with a message naming the commit and who shipped it. The first
    component that fails stops the rest.
@@ -378,6 +394,7 @@ jobs:
     with:
       environment: production
       shipper-ref: <full-commit-sha> # v1.x
+      # wait-minutes: 30 # how long the gate waits for running checks (0: fail at once)
     secrets: inherit
 ```
 
