@@ -14,18 +14,23 @@ pnpm add -g github:ideaSquared/shipper     # install or update
 ship --version                             # which version is installed
 ```
 
+With pnpm 11 the global bin directory is `PNPM_HOME\bin` (`$PNPM_HOME/bin` outside Windows). If
+`ship` is not found, or `ship --version` prints an old or unknown version, run `pnpm setup` (pnpm 11.15.1
+or newer) and open a new terminal. An older copy earlier on the PATH can shadow the new one: list every
+copy with `Get-Command ship -All` (PowerShell) or `which -a ship`, and remove the stale one.
+
 ```bash
 ship status all                            # every product: what is live, and how far behind its default branch
-ship status gaminginit-bot                 # one product: what is live in each environment, and how far behind main
-ship diff gaminginit-bot                   # the commits waiting to ship (and any new migrations)
-ship log gaminginit-bot -n 10              # recent deploys and their state
-ship deploy gaminginit-bot production      # check, confirm, start the deploy and follow it
-ship production gaminginit-bot             # same as deploy
-ship rollback gaminginit-bot production    # put back the commit that was live before, and follow it
-ship freeze gaminginit-bot production --reason "db incident"   # block deploys, with a reason everyone sees
-ship unfreeze gaminginit-bot production    # lift it (no environment: lift everything)
-ship doctor gaminginit-bot [production]    # check the deploy setup before anyone deploys
-ship logs gaminginit-bot staging           # stream live logs (wrangler tail) of a deployed environment
+ship status creatrgrid                     # one product: what is live in each environment, and how far behind main
+ship diff creatrgrid                       # the commits waiting to ship (and any new migrations)
+ship log creatrgrid -n 10                  # recent deploys and their state
+ship deploy creatrgrid production          # check, confirm, start the deploy and follow it
+ship production creatrgrid                 # same as deploy
+ship rollback creatrgrid production        # put back the commit that was live before, and follow it
+ship freeze creatrgrid production --reason "db incident" # block deploys, with a reason everyone sees
+ship unfreeze creatrgrid production        # lift it (no environment: lift everything)
+ship doctor creatrgrid [production]        # check the deploy setup before anyone deploys
+ship logs creatrgrid staging           # stream live logs (wrangler tail) of a deployed environment
 ship logs staging --component api          # just one component
 ```
 
@@ -457,6 +462,26 @@ not on `main`, or whose CI `test` job has not passed.
 
 A breaking change to `ship.yaml` or the workflow inputs gets a new `v2` tag instead. Mark it in the commit
 (`feat!: …` or a `BREAKING CHANGE:` footer): the release run refuses to move `v1` over it; create `v2` by hand.
+
+### Releasing a new shipper version
+
+1. Merge the change PR with `version` bumped in `package.json` and an entry in `CHANGELOG.md`. A
+   breaking change (`feat!:` or a `BREAKING CHANGE:` footer) is a new major: create `v2` by hand, because
+   the release run refuses to move `v1` over it.
+2. Run Actions > Release > Run workflow and approve the `release` environment. It tags `vX.Y.Z`, publishes
+   the GitHub Release and moves `v1`. Re-running after a failure reuses the tag.
+3. Product repos: Dependabot's `github-actions` update opens a PR that bumps the `uses:` SHA. The
+   "shipper pins match" check in their `ci.yml` fails until `shipper-ref` is the same SHA. The Dependency
+   sweep (a scheduled task outside this repo) pushes that fix, unless the CHANGELOG lists a breaking change
+   or a new required `ship.yaml` key or input; then it comments what to change by hand. Merge those PRs. A
+   repo that deploys on merge uses the new shipper from its next merge: `ideasquared-website` (staging,
+   then production in the same run), `creatrgrid` (staging; production by hand), `ideasquared-bot` and
+   `agent-idea` (production). Others, such as `pairflix`, deploy only when someone runs `ship deploy`.
+4. Developer machines: `eng` updates `ship`, `idea` and `eng` on every run, and `ship --version` shows the
+   version. If it is old, run `pnpm setup` (pnpm 11.15.1 or newer) and check `Get-Command ship -All` or
+   `which -a ship` for a stale copy.
+5. A bad shipper release: revert the change in shipper and release a new patch version. Product repos keep
+   their old SHA pin until they merge the bump PR, so nothing moves without a PR.
 
 ## Development
 

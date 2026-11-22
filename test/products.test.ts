@@ -27,6 +27,13 @@ describe('resolveRepo', () => {
     expect(activeProducts()).toHaveProperty('ideasquared-website');
   });
 
+  it('knows pairflix', () => {
+    expect(resolveRepo({ product: 'pairflix' })).toBe('ideaSquared/pairflix');
+    expect(productForRepo('ideaSquared/pairflix')).toBe('pairflix');
+    expect(activeProducts()).toHaveProperty('pairflix', 'ideaSquared/pairflix');
+    expect(() => assertShippable('pairflix')).not.toThrow();
+  });
+
   it('explains what to do when it cannot tell', () => {
     expect(() => resolveRepo({ product: 'nope' })).toThrow("Unknown product 'nope'");
     expect(() => resolveRepo({})).toThrow('Which product?');
