@@ -360,8 +360,10 @@ suggests `ship rollback <product> <environment>`. Response bodies and the `expec
 logged, only the status and whether `expect` matched.
 
 For a Cloudflare product, the GitHub Deployment of a smoke-failed release is marked `error`, not
-`success`: an environment that `requires` this one won't take that commit, and `ship rollback` knows
-the release is still running, so it rolls back to the last healthy release. An environment with no `smoke:` entry runs nothing.
+`success`: an environment that `requires` this one won't take that commit. It still counts as live,
+because it is still running: the stale check refuses an older commit over it, `ship status`, `ship diff`,
+the deploy preview and the Discord commit list count from it, and `ship rollback` rolls back from it to the
+last healthy release, even when a newer deploy failed. An environment with no `smoke:` entry runs nothing.
 
 ## Using it in a repo
 

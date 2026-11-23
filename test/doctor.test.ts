@@ -33,7 +33,7 @@ function client(overrides: Partial<GitHubClient> = {}, files: Record<string, str
     isOnBranch: unused,
     deployedTo: unused,
     deployingTo: unused,
-    lastSuccessfulDeployment: unused,
+    lastLiveDeployment: unused,
     compare: unused,
     relation: unused,
     deployments: unused,

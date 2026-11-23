@@ -141,12 +141,14 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
             // GitHub's default filter returns the latest run of each check, so a passing re-run replaces a failure.
             return getAll(`/commits/${sha}/check-runs?per_page=100`, CheckRunsSchema, (page) => page.check_runs);
         },
-        async lastSuccessfulDeployment(environment) {
+        async lastLiveDeployment(environment) {
             const query = new URLSearchParams({ environment, per_page: '20' });
-            // Newest first; stop at the first one that succeeded.
+            // Newest first; stop at the first one that is live. Statuses are newest first too. Shipper writes `error`
+            // only for a smoke failure, so a newer `failure` or a deploy still running doesn't hide it.
             return findInPages(`/deployments?${query}`, DeploymentShasSchema, (page) => page, async (deployment) => {
                 const statuses = await getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page);
-                return statuses.some((status) => status.state === 'success') ? deployment.sha : undefined;
+                const live = statuses[0]?.state === 'error' || statuses.some((status) => status.state === 'success');
+                return live ? deployment.sha : undefined;
             });
         },
         async relation(base, head) {

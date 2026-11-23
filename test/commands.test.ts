@@ -41,7 +41,7 @@ function fakeClient(overrides: Partial<GitHubClient> = {}): Fake {
     checkRuns: async () => [{ name: 'test', status: 'completed', conclusion: 'success' }],
     deployedTo: async () => [],
     deployingTo: async () => [],
-    lastSuccessfulDeployment: async () => LIVE,
+    lastLiveDeployment: async () => LIVE,
     relation: async () => 'ahead',
     compare: async () => ({
       totalCommits: 2,
@@ -269,7 +269,7 @@ describe('requires and smoke state, shown before a deploy', () => {
   it('diff warns about a prerequisite and a freeze for an environment that was never deployed', async () => {
     const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
     const { ctx, lines } = context(
-      fakeClient({ deployments: async () => [], lastSuccessfulDeployment: async () => undefined, readVariable: async () => frozen }),
+      fakeClient({ deployments: async () => [], lastLiveDeployment: async () => undefined, readVariable: async () => frozen }),
       TWO,
     );
     await diff(ctx, 'production');
@@ -280,7 +280,7 @@ describe('requires and smoke state, shown before a deploy', () => {
   it('diff still shows a freeze when head is already live, but not check or prerequisite warnings', async () => {
     const frozen = JSON.stringify({ environments: 'all', reason: 'db incident', by: 'octocat', at: '2026-11-13T20:00:00Z' });
     const client = fakeClient({
-      lastSuccessfulDeployment: async () => HEAD,
+      lastLiveDeployment: async () => HEAD,
       readVariable: async () => frozen,
       checkRuns: async () => [{ name: 'test', status: 'in_progress', conclusion: null }],
     });
@@ -289,6 +289,17 @@ describe('requires and smoke state, shown before a deploy', () => {
     expect(lines.join('\n')).toContain('❄️  frozen: all environments');
     expect(lines.join('\n')).not.toContain('only takes');
     expect(lines.join('\n')).not.toContain('still running');
+  });
+
+  it('status shows a newer smoke-failed release as live, not the older success', async () => {
+    const history: DeploymentSummary[] = [
+      { sha: 'ffffffff', createdAt: '2026-11-15T20:42:50Z', creator: 'octocat', state: 'error' },
+      { sha: LIVE, createdAt: '2026-11-14T20:42:50Z', creator: 'hubot', state: 'success' },
+    ];
+    const { ctx, lines } = context(fakeClient({ deployments: async () => history }));
+    await status(ctx);
+    expect(lines[1]).toContain('fffffff');
+    expect(lines[1]).not.toContain('aaaaaaa');
   });
 
   it('status does not flag it once a later deploy went through', async () => {
@@ -300,6 +311,22 @@ describe('requires and smoke state, shown before a deploy', () => {
 });
 
 describe('diff', () => {
+  it('counts from a release whose smoke checks failed, not the older success', async () => {
+    const X = 'ffffffff55555555ffffffff55555555ffffffff';
+    const compared: string[] = [];
+    const client = fakeClient({
+      lastLiveDeployment: async () => X,
+      compare: async (base, head) => {
+        compared.push(`${base}...${head}`);
+        return { totalCommits: 1, url: 'u', commits: [{ sha: HEAD, message: 'newest feature', author: 'octocat', url: 'u' }] };
+      },
+    });
+    const { ctx, lines } = context(client);
+    await diff(ctx, undefined);
+    expect(compared).toEqual([`${X}...${HEAD}`]);
+    expect(lines[0]).toBe('📦 production: fffffff → ccccccc · 1 commits waiting');
+  });
+
   it('lists the commits waiting to ship, newest first', async () => {
     const { ctx, lines } = context(fakeClient());
     await diff(ctx, undefined);
@@ -537,7 +564,7 @@ describe('deploy', () => {
   });
 
   it('does nothing when the commit is already live, unless asked to redeploy', async () => {
-    const client = fakeClient({ lastSuccessfulDeployment: async () => HEAD });
+    const client = fakeClient({ lastLiveDeployment: async () => HEAD });
     const { ctx, lines } = context(client);
     expect(await deploy(ctx, undefined, options())).toBe(0);
     expect(client.dispatched).toEqual([]);
@@ -617,6 +644,19 @@ describe('deploy', () => {
       "⛔ Can't ship ccccccc to production:",
       '   • ccccccc is older than aaaaaaa, which is live on production. If an old run was re-run, deploy the latest commit instead. To go back on purpose, use ship rollback gaminginit-bot production.',
     ]);
+  });
+
+  it('refuses a commit older than a newer release whose smoke checks failed, even if newer than the last success', async () => {
+    // S (LIVE) is the last `success`; X went live after it but failed its smoke checks; HEAD is between them.
+    const X = 'ffffffff55555555ffffffff55555555ffffffff';
+    const client = fakeClient({
+      lastLiveDeployment: async () => X,
+      relation: async (base) => (base === X ? 'behind' : 'ahead'),
+    });
+    const { ctx, lines } = context(client);
+    expect(await deploy(ctx, undefined, options())).toBe(1);
+    expect(client.dispatched).toEqual([]);
+    expect(lines.join('\n')).toContain('ccccccc is older than fffffff, which is live on production.');
   });
 
   it('still deploys when GitHub cannot compare the commits, and says so', async () => {
@@ -814,7 +854,21 @@ describe('rollback', () => {
       { sha: 'fffffff0', createdAt: '2026-11-13T21:00:00Z', creator: 'o', state: 'error' },
       ...(await history()).slice(1),
     ];
-    const client = fakeClient({ deployments: smokeFailed, compare: takenOut });
+    const client = fakeClient({ deployments: smokeFailed, lastLiveDeployment: async () => 'fffffff0', compare: takenOut });
+    const { ctx, lines } = context(client);
+    await rollback(ctx, undefined, options({ wait: false }));
+    expect(client.dispatched[0]?.inputs.sha).toBe(LIVE);
+    expect(lines[0]).toContain('live fffffff → aaaaaaa');
+  });
+
+  it('still rolls back from the smoke-failed release when a newer deploy failed', async () => {
+    // A later deploy failed its health check and was rolled back by wrangler, so the smoke-failed one is running.
+    const failedOnTop = async (): Promise<DeploymentSummary[]> => [
+      { sha: 'ggggggg0', createdAt: '2026-11-13T22:00:00Z', creator: 'o', state: 'failure' },
+      { sha: 'fffffff0', createdAt: '2026-11-13T21:00:00Z', creator: 'o', state: 'error' },
+      ...(await history()).slice(1),
+    ];
+    const client = fakeClient({ deployments: failedOnTop, lastLiveDeployment: async () => 'fffffff0', compare: takenOut });
     const { ctx, lines } = context(client);
     await rollback(ctx, undefined, options({ wait: false }));
     expect(client.dispatched[0]?.inputs.sha).toBe(LIVE);
@@ -843,7 +897,7 @@ describe('rollback', () => {
   });
 
   it('explains when there is nothing to roll back to', async () => {
-    const never = context(fakeClient({ lastSuccessfulDeployment: async () => undefined }));
+    const never = context(fakeClient({ lastLiveDeployment: async () => undefined }));
     await expect(rollback(never.ctx, undefined, options())).rejects.toThrow('production has never been deployed');
     const once = context(fakeClient({ deployments: async () => [{ sha: LIVE, createdAt: '', creator: 'o', state: 'success' }] }));
     await expect(rollback(once.ctx, undefined, options())).rejects.toThrow('No earlier deploy of production to roll back to.');

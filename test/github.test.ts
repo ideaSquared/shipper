@@ -83,12 +83,38 @@ describe('createGitHubClient', () => {
       '/deployments/2/statuses?per_page=100': [{ state: 'inactive' }, { state: 'success' }],
     });
     const github = createGitHubClient('acme/app', 'token', fetch);
-    expect(await github.lastSuccessfulDeployment('production')).toBe('bbb');
+    expect(await github.lastLiveDeployment('production')).toBe('bbb');
+  });
+
+  it('counts a release whose smoke checks failed (error) as live, newer than the last success', async () => {
+    const { fetch } = fakeFetch({
+      '/deployments?environment=production&per_page=20': [
+        { id: 3, sha: 'xxx' },
+        { id: 2, sha: 'sss' },
+      ],
+      '/deployments/3/statuses?per_page=100': [{ state: 'error' }, { state: 'in_progress' }],
+      '/deployments/2/statuses?per_page=100': [{ state: 'success' }],
+    });
+    expect(await createGitHubClient('acme/app', 'token', fetch).lastLiveDeployment('production')).toBe('xxx');
+  });
+
+  it('skips a newer failed deploy to find the smoke-failed release still running', async () => {
+    const { fetch } = fakeFetch({
+      '/deployments?environment=production&per_page=20': [
+        { id: 4, sha: 'fff' },
+        { id: 3, sha: 'xxx' },
+        { id: 2, sha: 'sss' },
+      ],
+      '/deployments/4/statuses?per_page=100': [{ state: 'failure' }, { state: 'in_progress' }],
+      '/deployments/3/statuses?per_page=100': [{ state: 'error' }],
+      '/deployments/2/statuses?per_page=100': [{ state: 'success' }],
+    });
+    expect(await createGitHubClient('acme/app', 'token', fetch).lastLiveDeployment('production')).toBe('xxx');
   });
 
   it('returns nothing for an environment never deployed', async () => {
     const { fetch } = fakeFetch({ '/deployments?environment=production&per_page=20': [] });
-    expect(await createGitHubClient('acme/app', 'token', fetch).lastSuccessfulDeployment('production')).toBeUndefined();
+    expect(await createGitHubClient('acme/app', 'token', fetch).lastLiveDeployment('production')).toBeUndefined();
   });
 
   it('summarises the commits between two SHAs', async () => {
@@ -163,7 +189,7 @@ describe('createGitHubClient', () => {
       if (!page) return new Response('{}', { status: 404 });
       return new Response(JSON.stringify(page.body), { headers: page.next ? { link: `<${page.next}>; rel="next"` } : undefined });
     };
-    expect(await createGitHubClient('acme/app', 'token', fetchImpl).lastSuccessfulDeployment('production')).toBe('good');
+    expect(await createGitHubClient('acme/app', 'token', fetchImpl).lastLiveDeployment('production')).toBe('good');
   });
 
   it('starts a workflow on a branch with its inputs, with a User-Agent and token', async () => {
