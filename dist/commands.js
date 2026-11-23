@@ -192,7 +192,7 @@ function printMigrations(ctx, comparison) {
 export async function diff(ctx, environment) {
     const s = ctx.style;
     const env = pickEnvironment(ctx.manifest, environment);
-    const live = await ctx.client.lastSuccessfulDeployment(env);
+    const live = await ctx.client.lastLiveDeployment(env);
     if (!live) {
         ctx.print(`⚪ ${s.env(env)} has never been deployed. ${ctx.defaultBranch} is at ${s.sha(short(ctx.head))}.`);
         await warnIfBlocked(ctx, [env]);
@@ -274,7 +274,7 @@ export async function deploy(ctx, environment, options) {
     const [checkRuns, deployedTo, live] = await Promise.all([
         manifest.checks.length > 0 ? client.checkRuns(head) : Promise.resolve([]),
         client.deployedTo(head, requires),
-        client.lastSuccessfulDeployment(env),
+        client.lastLiveDeployment(env),
     ]);
     // A `requires` environment without the commit may be deploying it right now: then the deploy can queue behind it.
     const notYet = requires.filter((required) => !deployedTo.includes(required));
@@ -471,12 +471,11 @@ export async function rollback(ctx, environment, options) {
     const env = pickEnvironment(manifest, environment);
     if (!ctx.canWrite)
         throw new Error('Rolling back needs a GitHub token. Run `gh auth login` or set GH_TOKEN.');
-    const [live, deployments] = await Promise.all([client.lastSuccessfulDeployment(env), client.deployments(env, 50)]);
-    if (!live)
+    // The running release may be one whose smoke checks failed (`error`, nothing rolled it back), even behind a
+    // newer `failure`: roll back from it, so the last `success` release is a valid target, not "already live".
+    const [running, deployments] = await Promise.all([client.lastLiveDeployment(env), client.deployments(env, 50)]);
+    if (!running)
         throw new Error(`${env} has never been deployed, so there is nothing to roll back.`);
-    // A release whose smoke checks failed is recorded as `error` but is still what's running (nothing rolled it
-    // back), so roll back from it: the last `success` release is then a valid target, not "already live".
-    const running = deployments[0]?.state === 'error' ? deployments[0].sha : live;
     const target = rollbackTarget(deployments, running, env, options.to);
     // An incident often needs a rollback, so a freeze only gets mentioned, and an unreadable one never stops it.
     const frozen = await freezeOf(ctx).catch((error) => {

@@ -171,7 +171,7 @@ async function gate(environment: string): Promise<number> {
     github.isOnBranch(env.SHIP_SHA, env.DEFAULT_BRANCH),
     manifest.checks.length > 0 ? github.checkRuns(env.SHIP_SHA) : Promise.resolve([]),
     github.deployedTo(env.SHIP_SHA, deployedEnvironments),
-    env.SHIP_ROLLBACK ? Promise.resolve(undefined) : github.lastSuccessfulDeployment(environment).catch(() => undefined),
+    env.SHIP_ROLLBACK ? Promise.resolve(undefined) : github.lastLiveDeployment(environment).catch(() => undefined),
   ]);
   // A rollback is never blocked by a freeze, not even by one that can't be read.
   const frozen = env.SHIP_ROLLBACK ? {} : freezeFromVariable(env.SHIP_FREEZE);
@@ -241,8 +241,8 @@ async function deploy(environment: string): Promise<number> {
     return 1;
   }
 
-  // Read before deploying: once this deploy succeeds, it becomes the newest successful one.
-  const previousSha = await github.lastSuccessfulDeployment(environment).catch((error: unknown) => {
+  // Read before deploying: once this deploy goes live, it becomes the newest live one.
+  const previousSha = await github.lastLiveDeployment(environment).catch((error: unknown) => {
     annotate('Ship', `Could not read the last deploy to ${environment}: ${String(error)}`, 'warning');
     return undefined;
   });
