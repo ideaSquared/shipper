@@ -8,6 +8,10 @@ updates:
       prefix: chore(deps)
     cooldown:
       default-days: 3
+    ignore:
+      # Node.js stays on 24 LTS (owner decision), so @types/node stays on major 24.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
