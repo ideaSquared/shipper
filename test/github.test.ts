@@ -38,6 +38,22 @@ describe('createGitHubClient', () => {
     expect(await github.deployedTo('aaa', ['staging', 'qa'])).toEqual(['staging']);
   });
 
+  it('counts a recent unfinished deployment as under way, but not one abandoned long ago', async () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    const { fetch } = fakeFetch({
+      '/deployments?sha=aaa&environment=staging&per_page=1': [{ id: 1, created_at: minutesAgo(10) }],
+      '/deployments/1/statuses?per_page=1': [{ state: 'in_progress', created_at: minutesAgo(9) }],
+      '/deployments?sha=aaa&environment=qa&per_page=1': [{ id: 2, created_at: minutesAgo(5 * 60) }],
+      '/deployments/2/statuses?per_page=1': [{ state: 'in_progress', created_at: minutesAgo(5 * 60) }],
+      '/deployments?sha=aaa&environment=demo&per_page=1': [{ id: 3, created_at: minutesAgo(5 * 60) }],
+      '/deployments/3/statuses?per_page=1': [],
+      '/deployments?sha=aaa&environment=preview&per_page=1': [{ id: 4, created_at: minutesAgo(2) }],
+      '/deployments/4/statuses?per_page=1': [],
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.deployingTo('aaa', ['staging', 'qa', 'demo', 'preview'])).toEqual(['staging', 'preview']);
+  });
+
   it('says which API call failed', async () => {
     const { fetch } = fakeFetch({});
     const github = createGitHubClient('acme/app', 'token', fetch);

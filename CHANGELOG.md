@@ -12,6 +12,9 @@ and [Semantic Versioning](https://semver.org/). The release PR adds the entry an
   environment the commit is being deployed to right now, the gate in `deploy.yml` and `gate.yml` waits for
   them instead of failing. It goes on as soon as they pass, and fails as soon as a check fails or when the
   time runs out. The new `wait-minutes` input sets the limit (default 30; `0` fails at once, as before).
+  A Deployment left unfinished for over 90 minutes (its job was cancelled or lost) does not count as a
+  deploy under way, so the gate fails at once instead of waiting for it. The deploy job in `deploy.yml`
+  now times out after 60 minutes.
 - `ship deploy` no longer refuses while checks are only running: it starts the workflow, says the deploy is
   queued and what it waits for, and shows which checks are still running before following the jobs.
 - Ctrl-C while `ship deploy` or `ship rollback` follows a run says the run keeps going, with its link.

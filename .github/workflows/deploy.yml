@@ -102,6 +102,9 @@ jobs:
     name: Deploy (${{ inputs.environment }})
     needs: gate
     runs-on: ubuntu-latest
+    # Bounds how long a Deployment can honestly stay in_progress: the gate treats an older unfinished one
+    # as abandoned (a cancelled or lost job never marks it failed).
+    timeout-minutes: 60
     environment:
       name: ${{ inputs.environment }}
       # Use the Environment's secrets and approvals without GitHub's automatic Deployment, which

@@ -44,8 +44,13 @@ const CheckRunsSchema = z.object({
 });
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
+const DatedDeploymentsSchema = z.array(z.object({ id: z.number(), created_at: z.string() }));
+const DatedStatusesSchema = z.array(z.object({ state: z.string(), created_at: z.string() }));
 // Deployment states that mean a deploy has started and not finished. No status at all is `pending` too.
 const UNFINISHED = new Set(['pending', 'queued', 'waiting', 'in_progress']);
+// A cancelled, timed-out or lost deploy job never finishes its Deployment, so an unfinished one older than
+// this is abandoned, not under way. Above the deploy job's `timeout-minutes` (60) in deploy.yml.
+const ABANDONED_AFTER_MS = 90 * 60_000;
 const RepoSchema = z.object({ default_branch: z.string() });
 const CommitSchema = z.object({ sha: z.string() });
 const ContentSchema = z.object({ content: z.string(), encoding: z.string() });
@@ -307,11 +312,13 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
         async deployingTo(sha, environments) {
             const results = await Promise.all(environments.map(async (environment) => {
                 // Newest first, so one deployment and its latest status are enough.
-                const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DeploymentsSchema);
+                const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DatedDeploymentsSchema);
                 if (!newest)
                     return false;
-                const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, StatusesSchema);
-                return UNFINISHED.has(latest?.state ?? 'pending');
+                const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, DatedStatusesSchema);
+                if (!UNFINISHED.has(latest?.state ?? 'pending'))
+                    return false;
+                return Date.now() - Date.parse((latest ?? newest).created_at) < ABANDONED_AFTER_MS;
             }));
             return environments.filter((_, index) => results[index]);
         },
