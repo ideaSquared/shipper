@@ -109,6 +109,8 @@ const CheckRunsSchema = z.object({
 });
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
+const LinkedStatusesSchema = z.array(z.object({ state: z.string(), log_url: z.string().nullish(), target_url: z.string().nullish() }));
+const RunStatusSchema = z.object({ status: z.string() });
 // Deployment states that mean a deploy has started and not finished. No status at all is `pending` too.
 const UNFINISHED = new Set(['pending', 'queued', 'waiting', 'in_progress']);
 
@@ -217,6 +219,15 @@ export function createGitHubClient(repository: string, token: string | undefined
       deployments.map((deployment) => getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page)),
     );
     return statuses.flat().some((status) => status.state === 'success');
+  }
+
+  // The id of a run of this repo that a status links to (https://github.com/<repo>/actions/runs/<id>[/job/…]).
+  function runIdOf(url: string | null | undefined): string | undefined {
+    if (!url || !URL.canParse(url)) return undefined;
+    const { hostname, pathname } = new URL(url);
+    const match = /^\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(\/|$)/.exec(pathname);
+    if (hostname !== 'github.com' || match?.[1]?.toLowerCase() !== repository.toLowerCase()) return undefined;
+    return match[2];
   }
 
   return {
@@ -405,8 +416,16 @@ export function createGitHubClient(repository: string, token: string | undefined
           // Newest first, so one deployment and its latest status are enough.
           const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DeploymentsSchema);
           if (!newest) return false;
-          const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, StatusesSchema);
-          return UNFINISHED.has(latest?.state ?? 'pending');
+          const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, LinkedStatusesSchema);
+          if (!UNFINISHED.has(latest?.state ?? 'pending')) return false;
+          // A cancelled, timed-out or lost job never finishes its Deployment. When the status links a run of
+          // this repo and that run is over, the deploy is abandoned. Otherwise it is under way.
+          const runId = runIdOf(latest?.log_url) ?? runIdOf(latest?.target_url);
+          if (runId === undefined) return true;
+          return get(`/actions/runs/${runId}`, RunStatusSchema).then(
+            (run) => run.status !== 'completed',
+            () => true,
+          );
         }),
       );
       return environments.filter((_, index) => results[index]);

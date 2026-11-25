@@ -38,6 +38,31 @@ describe('createGitHubClient', () => {
     expect(await github.deployedTo('aaa', ['staging', 'qa'])).toEqual(['staging']);
   });
 
+  it('counts an unfinished deployment as under way unless the run it links to is over', async () => {
+    const run = (id: number) => `https://github.com/acme/app/actions/runs/${id}`;
+    const { fetch } = fakeFetch({
+      // shipper's own deploy job, cancelled: its run is completed but the Deployment stayed in_progress.
+      '/deployments?sha=aaa&environment=staging&per_page=1': [{ id: 1 }],
+      '/deployments/1/statuses?per_page=1': [{ state: 'in_progress', log_url: run(11) }],
+      '/actions/runs/11': { status: 'completed' },
+      // An external deploy waiting for approval, however long ago it started: its run is still going.
+      '/deployments?sha=aaa&environment=qa&per_page=1': [{ id: 2 }],
+      '/deployments/2/statuses?per_page=1': [{ state: 'waiting', log_url: null, target_url: `${run(22)}/job/5` }],
+      '/actions/runs/22': { status: 'waiting' },
+      // No status yet, so no run to look at.
+      '/deployments?sha=aaa&environment=demo&per_page=1': [{ id: 3 }],
+      '/deployments/3/statuses?per_page=1': [],
+      // A run that can't be read (no actions: read) keeps the deploy under way.
+      '/deployments?sha=aaa&environment=preview&per_page=1': [{ id: 4 }],
+      '/deployments/4/statuses?per_page=1': [{ state: 'in_progress', log_url: run(44) }],
+      // A link to another repo's run is not followed.
+      '/deployments?sha=aaa&environment=sandbox&per_page=1': [{ id: 5 }],
+      '/deployments/5/statuses?per_page=1': [{ state: 'in_progress', log_url: 'https://github.com/other/repo/actions/runs/11' }],
+    });
+    const github = createGitHubClient('acme/app', 'token', fetch);
+    expect(await github.deployingTo('aaa', ['staging', 'qa', 'demo', 'preview', 'sandbox'])).toEqual(['qa', 'demo', 'preview', 'sandbox']);
+  });
+
   it('says which API call failed', async () => {
     const { fetch } = fakeFetch({});
     const github = createGitHubClient('acme/app', 'token', fetch);

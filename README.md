@@ -131,8 +131,9 @@ dispatch:
    carries on as soon as everything has passed. It fails as soon as a check fails (or that other deploy
    does), and when the time runs out: 30 minutes by default, set by the workflow's `wait-minutes` input
    (`0` fails at once, as before). Anything else (not on the default branch, older than live, a freeze, a
-   check that never ran, a `requires` environment with no deploy under way) fails at once. The job log
-   says what it is waiting for and for how long.
+   check that never ran, a `requires` environment with no deploy under way) fails at once. A deploy whose
+   GitHub Deployment never finished but whose workflow run is over (cancelled, timed out, lost its runner)
+   is not under way. The job log says what it is waiting for and for how long.
 
 2. **Deploy.** For each component, in the order written in `ship.yaml`: run `build`, apply D1
    migrations, then `wrangler deploy` with a message naming the commit and who shipped it. The first
