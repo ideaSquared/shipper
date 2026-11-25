@@ -44,13 +44,10 @@ const CheckRunsSchema = z.object({
 });
 const DeploymentsSchema = z.array(z.object({ id: z.number() }));
 const StatusesSchema = z.array(z.object({ state: z.string() }));
-const DatedDeploymentsSchema = z.array(z.object({ id: z.number(), created_at: z.string() }));
-const DatedStatusesSchema = z.array(z.object({ state: z.string(), created_at: z.string() }));
+const LinkedStatusesSchema = z.array(z.object({ state: z.string(), log_url: z.string().nullish(), target_url: z.string().nullish() }));
+const RunStatusSchema = z.object({ status: z.string() });
 // Deployment states that mean a deploy has started and not finished. No status at all is `pending` too.
 const UNFINISHED = new Set(['pending', 'queued', 'waiting', 'in_progress']);
-// A cancelled, timed-out or lost deploy job never finishes its Deployment, so an unfinished one older than
-// this is abandoned, not under way. Above the deploy job's `timeout-minutes` (60) in deploy.yml.
-const ABANDONED_AFTER_MS = 90 * 60_000;
 const RepoSchema = z.object({ default_branch: z.string() });
 const CommitSchema = z.object({ sha: z.string() });
 const ContentSchema = z.object({ content: z.string(), encoding: z.string() });
@@ -135,6 +132,16 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
         const deployments = await getAll(`/deployments?${query}`, DeploymentsSchema, (page) => page);
         const statuses = await Promise.all(deployments.map((deployment) => getAll(`/deployments/${deployment.id}/statuses?per_page=100`, StatusesSchema, (page) => page)));
         return statuses.flat().some((status) => status.state === 'success');
+    }
+    // The id of a run of this repo that a status links to (https://github.com/<repo>/actions/runs/<id>[/job/…]).
+    function runIdOf(url) {
+        if (!url || !URL.canParse(url))
+            return undefined;
+        const { hostname, pathname } = new URL(url);
+        const match = /^\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(\/|$)/.exec(pathname);
+        if (hostname !== 'github.com' || match?.[1]?.toLowerCase() !== repository.toLowerCase())
+            return undefined;
+        return match[2];
     }
     return {
         async isOnBranch(sha, branch) {
@@ -312,13 +319,18 @@ export function createGitHubClient(repository, token, fetchImpl = fetch) {
         async deployingTo(sha, environments) {
             const results = await Promise.all(environments.map(async (environment) => {
                 // Newest first, so one deployment and its latest status are enough.
-                const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DatedDeploymentsSchema);
+                const [newest] = await get(`/deployments?${new URLSearchParams({ sha, environment, per_page: '1' })}`, DeploymentsSchema);
                 if (!newest)
                     return false;
-                const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, DatedStatusesSchema);
+                const [latest] = await get(`/deployments/${newest.id}/statuses?per_page=1`, LinkedStatusesSchema);
                 if (!UNFINISHED.has(latest?.state ?? 'pending'))
                     return false;
-                return Date.now() - Date.parse((latest ?? newest).created_at) < ABANDONED_AFTER_MS;
+                // A cancelled, timed-out or lost job never finishes its Deployment. When the status links a run of
+                // this repo and that run is over, the deploy is abandoned. Otherwise it is under way.
+                const runId = runIdOf(latest?.log_url) ?? runIdOf(latest?.target_url);
+                if (runId === undefined)
+                    return true;
+                return get(`/actions/runs/${runId}`, RunStatusSchema).then((run) => run.status !== 'completed', () => true);
             }));
             return environments.filter((_, index) => results[index]);
         },
